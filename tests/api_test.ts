@@ -16,7 +16,9 @@ function fakeMarket(prices: Record<string, string>, calls: string[]): typeof fet
     const symbol = url.searchParams.get("symbol")!;
     if (url.hostname === "www.alphavantage.co") {
       if (calls.filter((h) => h === "www.alphavantage.co").length > 1) {
-        return Promise.resolve(Response.json({ Information: "You have reached the 25 requests per day rate limit" }));
+        return Promise.resolve(
+          Response.json({ Information: "You have reached the 25 requests per day rate limit" }),
+        );
       }
       return Promise.resolve(Response.json({
         "Time Series (Daily)": { "2026-11-02": { "4. close": prices[symbol] ?? "0" } },
@@ -35,7 +37,10 @@ async function setup(fetchFn?: typeof fetch) {
     const res = await app(
       new Request(`http://pfat.test${path}`, {
         method,
-        headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        headers: {
+          "content-type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
         body: body === undefined ? undefined : JSON.stringify(body),
       }),
     );
@@ -60,12 +65,19 @@ async function setup(fetchFn?: typeof fetch) {
 
 Deno.test("auth: setup once, login, reject bad tokens", async () => {
   const { call, setToken } = await setup();
-  assert.equal((await call("POST", "/api/setup", { passphrase: "x".repeat(20), base_currency: "CAD", time_zone: "UTC" })).status, 409);
+  assert.equal(
+    (await call("POST", "/api/setup", { passphrase: "x".repeat(20), base_currency: "CAD", time_zone: "UTC" }))
+      .status,
+    409,
+  );
   assert.equal((await call("GET", "/api/dashboard")).status, 200);
   setToken("nope");
   assert.equal((await call("GET", "/api/dashboard")).status, 401);
   assert.equal((await call("POST", "/api/login", { passphrase: "wrong wrong wrong" })).status, 401);
-  const login = await call("POST", "/api/login", { passphrase: "correct horse battery staple", device_name: "phone" });
+  const login = await call("POST", "/api/login", {
+    passphrase: "correct horse battery staple",
+    device_name: "phone",
+  });
   assert.equal(login.status, 200);
   setToken(login.body.token);
   const sessions = (await call("GET", "/api/sessions")).body as unknown as J[];
@@ -82,8 +94,16 @@ Deno.test("trades: sales close specific purchases; theses link per purchase", as
   const asset = await ok("POST", "/api/assets", { account_id: acct.id, instrument_id: aapl.id });
   assert.equal(asset.tracking, "trades");
 
-  const b1 = await ok("POST", `/api/assets/${asset.id}/buys`, { trade_date: "2026-01-10", quantity: "10", price: "100" });
-  const b2 = await ok("POST", `/api/assets/${asset.id}/buys`, { trade_date: "2026-03-10", quantity: "5", price: "130" });
+  const b1 = await ok("POST", `/api/assets/${asset.id}/buys`, {
+    trade_date: "2026-01-10",
+    quantity: "10",
+    price: "100",
+  });
+  const b2 = await ok("POST", `/api/assets/${asset.id}/buys`, {
+    trade_date: "2026-03-10",
+    quantity: "5",
+    price: "130",
+  });
 
   const growth = await ok("POST", "/api/theses", { title: "Growth", status: "active" });
   const ai = await ok("POST", "/api/theses", { title: "AI wave", status: "active" });
@@ -95,15 +115,30 @@ Deno.test("trades: sales close specific purchases; theses link per purchase", as
   assert.equal((await call("POST", `/api/theses/${growth.id}/links`, { asset_id: asset.id })).status, 400);
 
   // Allocations must add up and not exceed what is open.
-  assert.equal((await call("POST", `/api/assets/${asset.id}/sells`, {
-    trade_date: "2026-04-01", quantity: "6", price: "150", allocations: [{ buy_trade_id: b2.id, quantity: "6" }],
-  })).status, 400);
-  assert.equal((await call("POST", `/api/assets/${asset.id}/sells`, {
-    trade_date: "2026-04-01", quantity: "6", price: "150", allocations: [{ buy_trade_id: b2.id, quantity: "5" }],
-  })).status, 400);
+  assert.equal(
+    (await call("POST", `/api/assets/${asset.id}/sells`, {
+      trade_date: "2026-04-01",
+      quantity: "6",
+      price: "150",
+      allocations: [{ buy_trade_id: b2.id, quantity: "6" }],
+    })).status,
+    400,
+  );
+  assert.equal(
+    (await call("POST", `/api/assets/${asset.id}/sells`, {
+      trade_date: "2026-04-01",
+      quantity: "6",
+      price: "150",
+      allocations: [{ buy_trade_id: b2.id, quantity: "5" }],
+    })).status,
+    400,
+  );
 
   const sale = await ok("POST", `/api/assets/${asset.id}/sells`, {
-    trade_date: "2026-04-01", quantity: "5", price: "150", allocations: [{ buy_trade_id: b2.id, quantity: "5" }],
+    trade_date: "2026-04-01",
+    quantity: "5",
+    price: "150",
+    allocations: [{ buy_trade_id: b2.id, quantity: "5" }],
   });
   assert.deepEqual(sale.fully_sold_theses, []); // AI wave still holds b1
 
@@ -118,11 +153,17 @@ Deno.test("triggers fire once, notifications need action, adjusting re-arms", as
   const acct = await ok("POST", "/api/accounts", { name: "Margin", kind: "self_directed", currency: "USD" });
   const inst = await ok("POST", "/api/instruments", { symbol: "NVDA", kind: "equity", currency: "USD" });
   const asset = await ok("POST", "/api/assets", { account_id: acct.id, instrument_id: inst.id });
-  const buy = await ok("POST", `/api/assets/${asset.id}/buys`, { trade_date: "2026-01-05", quantity: "4", price: "100" });
+  const buy = await ok("POST", `/api/assets/${asset.id}/buys`, {
+    trade_date: "2026-01-05",
+    quantity: "4",
+    price: "100",
+  });
   const t = await ok("POST", "/api/theses", { title: "AI capex", status: "active" });
   await ok("POST", `/api/theses/${t.id}/links`, { asset_id: asset.id, buy_trade_id: buy.id });
   const stop = await ok("POST", `/api/theses/${t.id}/triggers`, {
-    type: "pct_change", params: { direction: "down", percent: "10" }, note: "10% stop",
+    type: "pct_change",
+    params: { direction: "down", percent: "10" },
+    note: "10% stop",
   });
   await ok("POST", `/api/theses/${t.id}/triggers`, { type: "sell_on_date", params: { date: "2027-01-05" } });
 
@@ -143,7 +184,8 @@ Deno.test("triggers fire once, notifications need action, adjusting re-arms", as
 
   // Adjust the stop to 20%: resolves the alert as 'adjusted', thesis back to active, revision recorded.
   await ok("PATCH", `/api/triggers/${stop.id}`, {
-    params: { direction: "down", percent: "20" }, note: "Volatile; widening the stop",
+    params: { direction: "down", percent: "20" },
+    note: "Volatile; widening the stop",
   });
   assert.equal(((await ok("GET", "/api/notifications")) as unknown as J[]).length, 0);
   assert.equal((await ok("GET", `/api/theses/${t.id}`)).status, "active");
@@ -170,7 +212,10 @@ Deno.test("triggers fire once, notifications need action, adjusting re-arms", as
 Deno.test("claims come due for review; closing a thesis needs a retrospective", async () => {
   const { dbs, ok, call } = await setup();
   const t = await ok("POST", "/api/theses", { title: "Strong product", status: "active" });
-  const claim = await ok("POST", `/api/theses/${t.id}/claims`, { statement: "Margins keep expanding", review_every_days: 30 });
+  const claim = await ok("POST", `/api/theses/${t.id}/claims`, {
+    statement: "Margins keep expanding",
+    review_every_days: 30,
+  });
   assert.equal(queueClaimReviews(dbs.data, "2000-01-01"), 0);
   assert.equal(queueClaimReviews(dbs.data, claim.next_review_on), 1);
   assert.equal(queueClaimReviews(dbs.data, claim.next_review_on), 0, "one open review at a time");
@@ -180,7 +225,9 @@ Deno.test("claims come due for review; closing a thesis needs a retrospective", 
 
   assert.equal((await call("PATCH", `/api/theses/${t.id}`, { status: "closed" })).status, 400);
   const closed = await ok("PATCH", `/api/theses/${t.id}`, {
-    status: "closed", retrospective: "Product stayed strong but valuation capped returns", outcome: "partly",
+    status: "closed",
+    retrospective: "Product stayed strong but valuation capped returns",
+    outcome: "partly",
   });
   assert.equal(closed.status, "closed");
   await ok("POST", `/api/theses/${t.id}/reasoning`, { body: "Lesson: watch valuation, not just product." });
@@ -219,6 +266,7 @@ Deno.test("client is served with types stripped", async () => {
   assert.match(res.headers.get("content-type")!, /javascript/);
   const code = await res.text();
   assert.ok(!/:\s*string\b/.test(code), "type annotations removed");
-  assert.equal((await app(new Request("http://pfat.test/../deno.json"))).status, 404);
+  assert.equal((await app(new Request("http://pfat.test/%2e%2e/deno.json"))).status, 404);
+  assert.equal((await app(new Request("http://pfat.test/deno.json"))).status, 404);
   assert.equal((await app(new Request("http://pfat.test/theses/123"))).status, 200); // SPA fallback
 });

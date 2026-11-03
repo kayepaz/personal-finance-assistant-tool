@@ -38,7 +38,10 @@ export function createAsset(db: DB, body: Obj): Row {
     (account.kind === "self_directed" && instrument ? "trades" : "value");
   if (tracking === "trades" && !instrument) throw badRequest("Trade-tracked assets need an instrument");
   if (instrument) {
-    const dup = db.prepare("SELECT id FROM assets WHERE account_id = ? AND instrument_id = ?").get(accountId, instrument.id as string);
+    const dup = db.prepare("SELECT id FROM assets WHERE account_id = ? AND instrument_id = ?").get(
+      accountId,
+      instrument.id as string,
+    );
     if (dup) throw conflict(`${instrument.symbol} is already an asset in this account`);
   }
   const id = uuidv7();
@@ -62,9 +65,27 @@ export function createAsset(db: DB, body: Obj): Row {
 
 export function updateAsset(db: DB, id: string, body: Obj): Row {
   getAsset(db, id);
-  if (v.has(body, "name")) db.prepare("UPDATE assets SET name = ?, updated_at = ? WHERE id = ?").run(v.reqStr(body, "name", { max: 200 }), Date.now(), id);
-  if (v.has(body, "notes")) db.prepare("UPDATE assets SET notes = ?, updated_at = ? WHERE id = ?").run(v.str(body, "notes", { optional: true, max: 5000 }) ?? "", Date.now(), id);
-  if (v.has(body, "archived")) db.prepare("UPDATE assets SET archived_at = ?, updated_at = ? WHERE id = ?").run(v.bool(body, "archived") ? Date.now() : null, Date.now(), id);
+  if (v.has(body, "name")) {
+    db.prepare("UPDATE assets SET name = ?, updated_at = ? WHERE id = ?").run(
+      v.reqStr(body, "name", { max: 200 }),
+      Date.now(),
+      id,
+    );
+  }
+  if (v.has(body, "notes")) {
+    db.prepare("UPDATE assets SET notes = ?, updated_at = ? WHERE id = ?").run(
+      v.str(body, "notes", { optional: true, max: 5000 }) ?? "",
+      Date.now(),
+      id,
+    );
+  }
+  if (v.has(body, "archived")) {
+    db.prepare("UPDATE assets SET archived_at = ?, updated_at = ? WHERE id = ?").run(
+      v.bool(body, "archived") ? Date.now() : null,
+      Date.now(),
+      id,
+    );
+  }
   return withPosition(db, getAsset(db, id));
 }
 
@@ -94,7 +115,8 @@ export interface OpenBuy {
 }
 
 export function openBuys(db: DB, assetId: string): OpenBuy[] {
-  const buys = db.prepare("SELECT * FROM trades WHERE asset_id = ? AND side = 'buy' ORDER BY trade_date, id").all(assetId);
+  const buys = db.prepare("SELECT * FROM trades WHERE asset_id = ? AND side = 'buy' ORDER BY trade_date, id")
+    .all(assetId);
   return buys
     .map((b) => ({
       id: b.id as string,
@@ -126,20 +148,23 @@ export function withPosition(db: DB, asset: Row): Row {
 }
 
 export function listTrades(db: DB, assetId: string): Row[] {
-  const trades = db.prepare("SELECT * FROM trades WHERE asset_id = ? ORDER BY trade_date DESC, id DESC").all(assetId);
+  const trades = db.prepare("SELECT * FROM trades WHERE asset_id = ? ORDER BY trade_date DESC, id DESC").all(
+    assetId,
+  );
   return trades.map((t) =>
-    t.side === "buy"
-      ? { ...t, open_quantity: openQty(db, t) }
-      : {
-        ...t,
-        allocations: db.prepare("SELECT buy_trade_id, quantity FROM sale_allocations WHERE sell_trade_id = ?").all(t.id as string),
-      }
+    t.side === "buy" ? { ...t, open_quantity: openQty(db, t) } : {
+      ...t,
+      allocations: db.prepare("SELECT buy_trade_id, quantity FROM sale_allocations WHERE sell_trade_id = ?")
+        .all(t.id as string),
+    }
   );
 }
 
 export function recordBuy(db: DB, assetId: string, body: Obj): Row {
   const asset = getAsset(db, assetId);
-  if (asset.tracking !== "trades") throw badRequest("This asset is value-tracked; record a value snapshot instead");
+  if (asset.tracking !== "trades") {
+    throw badRequest("This asset is value-tracked; record a value snapshot instead");
+  }
   const id = uuidv7();
   db.prepare(
     `INSERT INTO trades(id, asset_id, side, trade_date, quantity, price, fees, notes, created_at)
@@ -178,7 +203,9 @@ export function recordSell(db: DB, assetId: string, body: Obj): SellResult {
     const o = a as Obj;
     return { buyId: v.reqStr(o, "buy_trade_id"), quantity: v.dec(o, "quantity", { positive: true })! };
   });
-  if (new Set(parsed.map((p) => p.buyId)).size !== parsed.length) throw badRequest("Each purchase may appear once");
+  if (new Set(parsed.map((p) => p.buyId)).size !== parsed.length) {
+    throw badRequest("Each purchase may appear once");
+  }
   if (d.cmp(d.sum(parsed.map((p) => p.quantity)), quantity) !== 0) {
     throw badRequest("Allocated quantities must add up to the sale quantity");
   }
@@ -186,8 +213,12 @@ export function recordSell(db: DB, assetId: string, body: Obj): SellResult {
   return transaction(db, () => {
     for (const p of parsed) {
       const buy = getTrade(db, p.buyId);
-      if (buy.asset_id !== assetId || buy.side !== "buy") throw badRequest(`Trade ${p.buyId} is not a purchase of this asset`);
-      if ((buy.trade_date as string) > tradeDate) throw badRequest(`Purchase on ${buy.trade_date} is after the sale date`);
+      if (buy.asset_id !== assetId || buy.side !== "buy") {
+        throw badRequest(`Trade ${p.buyId} is not a purchase of this asset`);
+      }
+      if ((buy.trade_date as string) > tradeDate) {
+        throw badRequest(`Purchase on ${buy.trade_date} is after the sale date`);
+      }
       if (d.cmp(p.quantity, openQty(db, buy)) > 0) {
         throw badRequest(`Purchase on ${buy.trade_date} only has ${openQty(db, buy)} left to sell`);
       }
@@ -206,7 +237,9 @@ export function recordSell(db: DB, assetId: string, body: Obj): SellResult {
       v.str(body, "notes", { optional: true, max: 2000 }) ?? "",
       Date.now(),
     );
-    const ins = db.prepare("INSERT INTO sale_allocations(sell_trade_id, buy_trade_id, quantity) VALUES (?, ?, ?)");
+    const ins = db.prepare(
+      "INSERT INTO sale_allocations(sell_trade_id, buy_trade_id, quantity) VALUES (?, ?, ?)",
+    );
     for (const p of parsed) ins.run(id, p.buyId, p.quantity);
     return { trade: getTrade(db, id), fully_sold_theses: fullySoldTheses(db, parsed.map((p) => p.buyId)) };
   });
@@ -224,7 +257,9 @@ function fullySoldTheses(db: DB, buyIds: string[]): Row[] {
     const links = db.prepare(
       "SELECT buy_trade_id FROM thesis_links WHERE thesis_id = ? AND unlinked_at IS NULL",
     ).all(t.id as string);
-    return links.every((l) => l.buy_trade_id && d.sign(openQty(db, getTrade(db, l.buy_trade_id as string))) === 0);
+    return links.every((l) =>
+      l.buy_trade_id && d.sign(openQty(db, getTrade(db, l.buy_trade_id as string))) === 0
+    );
   });
 }
 

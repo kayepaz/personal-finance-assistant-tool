@@ -18,7 +18,11 @@ function missing(body: Obj, key: string, opt?: Opt): boolean {
   return false;
 }
 
-export function str(body: Obj, key: string, opt: Opt & { max?: number; min?: number } = {}): string | undefined {
+export function str(
+  body: Obj,
+  key: string,
+  opt: Opt & { max?: number; min?: number } = {},
+): string | undefined {
   if (missing(body, key, opt)) return undefined;
   const v = body[key];
   if (typeof v !== "string") throw badRequest(`'${key}' must be a string`);
@@ -32,7 +36,11 @@ export function reqStr(body: Obj, key: string, opt: { max?: number; min?: number
   return str(body, key, opt)!;
 }
 
-export function int(body: Obj, key: string, opt: Opt & { min?: number; max?: number } = {}): number | undefined {
+export function int(
+  body: Obj,
+  key: string,
+  opt: Opt & { min?: number; max?: number } = {},
+): number | undefined {
   if (missing(body, key, opt)) return undefined;
   const v = body[key];
   if (typeof v !== "number" || !Number.isInteger(v)) throw badRequest(`'${key}' must be an integer`);
@@ -59,7 +67,12 @@ export function date(body: Obj, key: string, opt: Opt = {}): string | undefined 
   return v;
 }
 
-export function oneOf<T extends string>(body: Obj, key: string, values: readonly T[], opt: Opt = {}): T | undefined {
+export function oneOf<T extends string>(
+  body: Obj,
+  key: string,
+  values: readonly T[],
+  opt: Opt = {},
+): T | undefined {
   if (missing(body, key, opt)) return undefined;
   const v = body[key];
   if (typeof v !== "string" || !values.includes(v as T)) {

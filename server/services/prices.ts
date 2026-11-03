@@ -82,7 +82,10 @@ export const PROVIDERS: PriceProvider[] = [alphaVantage, finnhub];
 
 export function providerStatus(data: DB, cache: DB, day: string): Row[] {
   return PROVIDERS.map((p) => {
-    const usage = cache.prepare("SELECT calls, exhausted FROM api_usage WHERE provider = ? AND day = ?").get(p.id, day) as
+    const usage = cache.prepare("SELECT calls, exhausted FROM api_usage WHERE provider = ? AND day = ?").get(
+      p.id,
+      day,
+    ) as
       | Row
       | undefined;
     return {
@@ -114,7 +117,10 @@ export function setConsent(data: DB, purpose: string, description: string, grant
     data.prepare("INSERT INTO consents(id, purpose, description, granted_at) VALUES (?, ?, ?, ?)")
       .run(uuidv7(), purpose, description, Date.now());
   } else {
-    data.prepare("UPDATE consents SET revoked_at = ? WHERE purpose = ? AND revoked_at IS NULL").run(Date.now(), purpose);
+    data.prepare("UPDATE consents SET revoked_at = ? WHERE purpose = ? AND revoked_at IS NULL").run(
+      Date.now(),
+      purpose,
+    );
   }
 }
 
@@ -136,7 +142,10 @@ export function storePrice(cache: DB, symbol: string, close: DailyClose, currenc
 }
 
 function usage(cache: DB, provider: string, day: string): { calls: number; exhausted: boolean } {
-  const r = cache.prepare("SELECT calls, exhausted FROM api_usage WHERE provider = ? AND day = ?").get(provider, day) as
+  const r = cache.prepare("SELECT calls, exhausted FROM api_usage WHERE provider = ? AND day = ?").get(
+    provider,
+    day,
+  ) as
     | Row
     | undefined;
   return { calls: Number(r?.calls ?? 0), exhausted: r?.exhausted === 1 };
@@ -175,7 +184,9 @@ export async function refreshPrices(
   fetchFn: typeof fetch = fetch,
 ): Promise<RefreshResult> {
   const result: RefreshResult = { updated: [], deferred: [], failed: [] };
-  const usable = PROVIDERS.filter((p) => getSetting(data, `api_key:${p.id}`) && hasConsent(data, `market_data:${p.id}`));
+  const usable = PROVIDERS.filter((p) =>
+    getSetting(data, `api_key:${p.id}`) && hasConsent(data, `market_data:${p.id}`)
+  );
   const seen = new Set<string>();
 
   for (const inst of instruments) {
@@ -184,7 +195,10 @@ export async function refreshPrices(
     seen.add(symbol);
     const cached = latestPrice(cache, symbol);
     // Already fetched today? Skip.
-    if (cached && Number(cached.fetched_at) > 0 && new Date(Number(cached.fetched_at)).toISOString().slice(0, 10) === utcDay) {
+    if (
+      cached && Number(cached.fetched_at) > 0 &&
+      new Date(Number(cached.fetched_at)).toISOString().slice(0, 10) === utcDay
+    ) {
       continue;
     }
 
@@ -210,7 +224,10 @@ export async function refreshPrices(
         break;
       } catch (err) {
         if (err instanceof QuotaExceeded) {
-          cache.prepare("UPDATE api_usage SET exhausted = 1 WHERE provider = ? AND day = ?").run(p.id, utcDay);
+          cache.prepare("UPDATE api_usage SET exhausted = 1 WHERE provider = ? AND day = ?").run(
+            p.id,
+            utcDay,
+          );
           lastError = `${p.name}: ${err.message}`;
           continue;
         }

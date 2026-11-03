@@ -7,14 +7,14 @@ The SQL migrations are the source of truth:
 
 ## Conventions
 
-| Thing | Rule |
-| --- | --- |
-| Primary keys | UUID v7 as TEXT (time-ordered, safe to export/import/merge) |
-| Money, quantities, rates | Decimal strings as TEXT, computed with `server/lib/decimal.ts` (never floats) |
-| Business dates | TEXT `YYYY-MM-DD` |
-| Audit timestamps | INTEGER unix milliseconds, UTC |
-| Integrity | `PRAGMA foreign_keys = ON`; `STRICT` tables; business rules in the app layer; no triggers |
-| Migrations | Numbered `.sql` files, applied in order, tracked with `PRAGMA user_version` |
+| Thing                    | Rule                                                                                      |
+| ------------------------ | ----------------------------------------------------------------------------------------- |
+| Primary keys             | UUID v7 as TEXT (time-ordered, safe to export/import/merge)                               |
+| Money, quantities, rates | Decimal strings as TEXT, computed with `server/lib/decimal.ts` (never floats)             |
+| Business dates           | TEXT `YYYY-MM-DD`                                                                         |
+| Audit timestamps         | INTEGER unix milliseconds, UTC                                                            |
+| Integrity                | `PRAGMA foreign_keys = ON`; `STRICT` tables; business rules in the app layer; no triggers |
+| Migrations               | Numbered `.sql` files, applied in order, tracked with `PRAGMA user_version`               |
 
 ## Entities (data.db)
 

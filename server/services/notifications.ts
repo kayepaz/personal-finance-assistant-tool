@@ -50,7 +50,11 @@ function enrich(db: DB, n: Row): Row {
     if (f) {
       return {
         ...n,
-        firing: { ...f, observed: JSON.parse(f.observed as string), trigger_params: JSON.parse(f.trigger_params as string) },
+        firing: {
+          ...f,
+          observed: JSON.parse(f.observed as string),
+          trigger_params: JSON.parse(f.trigger_params as string),
+        },
       };
     }
   }
@@ -94,7 +98,10 @@ export function actOn(db: DB, id: string, body: Record<string, unknown>, todaySt
     if (action === "snooze") {
       const until = v.date(body, "until")!;
       if (until <= todayStr) throw badRequest("Snooze until a future date");
-      db.prepare("UPDATE notifications SET status = 'snoozed', snoozed_until = ? WHERE id = ?").run(until, id);
+      db.prepare("UPDATE notifications SET status = 'snoozed', snoozed_until = ? WHERE id = ?").run(
+        until,
+        id,
+      );
     } else {
       const note = action === "dismiss"
         ? v.reqStr(body, "note", { max: 2000 }) // dismissing needs a reason

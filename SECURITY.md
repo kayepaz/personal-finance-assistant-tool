@@ -17,6 +17,6 @@ Only the latest release receives security fixes while PFAT is pre-1.0.
 - Each device holds a random session token; the server stores only its SHA-256 hash. Sessions can be revoked.
 - Data at rest is plain SQLite on the host; protect the host and its disk. Backups are always encrypted with a
   user passphrase.
-- Outbound requests (market data, notification channels) require recorded consent and never include
-  holdings, quantities or balances.
+- Outbound requests (market data, notification channels) require recorded consent and never include holdings,
+  quantities or balances.
 - When serving other devices, run behind HTTPS.

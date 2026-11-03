@@ -18,7 +18,10 @@ export function listInstruments(db: DB): Row[] {
 export function createInstrument(db: DB, body: Record<string, unknown>): Row {
   const symbol = v.reqStr(body, "symbol", { max: 32 }).toUpperCase();
   const exchange = (v.str(body, "exchange", { optional: true, max: 32 }) ?? "").toUpperCase();
-  const existing = db.prepare("SELECT id FROM instruments WHERE symbol = ? AND exchange = ?").get(symbol, exchange);
+  const existing = db.prepare("SELECT id FROM instruments WHERE symbol = ? AND exchange = ?").get(
+    symbol,
+    exchange,
+  );
   if (existing) throw conflict(`${symbol}${exchange ? ` on ${exchange}` : ""} already exists`);
   const id = uuidv7();
   db.prepare(

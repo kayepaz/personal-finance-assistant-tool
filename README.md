@@ -19,15 +19,15 @@ Requires [Deno](https://deno.com) 2.2 or newer. There are no other dependencies 
 deno task start
 ```
 
-Open http://localhost:8787 and set your passphrase and base currency. Data is stored in `./data/`
-(`data.db` = your data, `cache.db` = market data that can be rebuilt).
+Open http://localhost:8787 and set your passphrase and base currency. Data is stored in `./data/` (`data.db` =
+your data, `cache.db` = market data that can be rebuilt).
 
-| Environment variable | Default | Meaning |
-| --- | --- | --- |
-| `PFAT_PORT` | `8787` | HTTP port |
-| `PFAT_HOST` | `127.0.0.1` | Bind address (use `0.0.0.0` to reach it from other devices on your network) |
-| `PFAT_DATA_DIR` | `./data` | Where the two SQLite files live |
-| `PFAT_SCHEDULER_MINUTES` | `60` | How often background jobs run |
+| Environment variable     | Default     | Meaning                                                                     |
+| ------------------------ | ----------- | --------------------------------------------------------------------------- |
+| `PFAT_PORT`              | `8787`      | HTTP port                                                                   |
+| `PFAT_HOST`              | `127.0.0.1` | Bind address (use `0.0.0.0` to reach it from other devices on your network) |
+| `PFAT_DATA_DIR`          | `./data`    | Where the two SQLite files live                                             |
+| `PFAT_SCHEDULER_MINUTES` | `60`        | How often background jobs run                                               |
 
 Market-data keys (Alpha Vantage, Finnhub) are entered in Settings, and each provider is only contacted after
 you consent to it.

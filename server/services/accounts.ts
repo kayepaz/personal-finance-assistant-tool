@@ -90,7 +90,9 @@ export function updateAccount(db: DB, id: string, body: Obj): Row {
     checkLink(db, linked, id);
     set("linked_account_id", linked ?? null);
   }
-  if (v.has(body, "archived")) set("archived_at", v.bool(body, "archived") ? (current.archived_at as number ?? Date.now()) : null);
+  if (v.has(body, "archived")) {
+    set("archived_at", v.bool(body, "archived") ? (current.archived_at as number ?? Date.now()) : null);
+  }
   if (!sets.length) return current;
   set("updated_at", Date.now());
   db.prepare(`UPDATE accounts SET ${sets.join(", ")} WHERE id = ?`).run(...vals, id);
@@ -116,7 +118,9 @@ export function addSnapshot(db: DB, accountId: string, body: Obj, todayStr: stri
 }
 
 export function listSnapshots(db: DB, accountId: string): Row[] {
-  return db.prepare("SELECT * FROM account_snapshots WHERE account_id = ? ORDER BY as_of DESC, created_at DESC")
+  return db.prepare(
+    "SELECT * FROM account_snapshots WHERE account_id = ? ORDER BY as_of DESC, created_at DESC",
+  )
     .all(accountId);
 }
 

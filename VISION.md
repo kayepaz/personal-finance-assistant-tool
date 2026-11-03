@@ -3,9 +3,9 @@
 PFAT helps a self-directed investor be honest with themselves.
 
 Every investment starts with a reason. Most people never write it down, so they can't tell later whether the
-reason still holds, or whether it was ever right. PFAT makes the reason a first-class object — a **thesis** with
-testable **triggers** and re-checkable **claims** — and turns its checks into a to-do list. When a position
-closes, PFAT asks whether the thesis played out, so your decision-making improves over time.
+reason still holds, or whether it was ever right. PFAT makes the reason a first-class object — a **thesis**
+with testable **triggers** and re-checkable **claims** — and turns its checks into a to-do list. When a
+position closes, PFAT asks whether the thesis played out, so your decision-making improves over time.
 
 Alongside that, PFAT keeps an approximate balance sheet so each decision is made with your whole financial
 picture in view.

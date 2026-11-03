@@ -42,7 +42,9 @@ export function migrate(db: DB, set: "data" | "cache"): number[] {
     applied.push(version);
   }
   const fkProblems = db.prepare("PRAGMA foreign_key_check").all();
-  if (fkProblems.length) throw new Error(`Foreign key check failed after migration: ${JSON.stringify(fkProblems)}`);
+  if (fkProblems.length) {
+    throw new Error(`Foreign key check failed after migration: ${JSON.stringify(fkProblems)}`);
+  }
   return applied;
 }
 
@@ -88,6 +90,8 @@ export function getSetting(db: DB, key: string): string | undefined {
 }
 
 export function setSetting(db: DB, key: string, value: string): void {
-  db.prepare("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+  db.prepare(
+    "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  )
     .run(key, value);
 }

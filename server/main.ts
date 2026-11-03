@@ -33,6 +33,12 @@ async function tick() {
 setTimeout(tick, 5_000);
 setInterval(tick, everyMinutes * 60_000);
 
-Deno.serve({ port, hostname, onListen: ({ hostname, port }) => {
-  console.log(`PFAT listening on http://${hostname}:${port}  (data: ${dataDir}, jobs every ${everyMinutes} min)`);
-} }, handler);
+Deno.serve({
+  port,
+  hostname,
+  onListen: ({ hostname, port }) => {
+    console.log(
+      `PFAT listening on http://${hostname}:${port}  (data: ${dataDir}, jobs every ${everyMinutes} min)`,
+    );
+  },
+}, handler);

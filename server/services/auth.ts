@@ -74,7 +74,11 @@ export async function verifyPassphrase(db: DB, passphrase: string): Promise<bool
   return timingSafeEqual(candidate, unb64(hash));
 }
 
-export async function login(db: DB, passphrase: string, deviceName: string): Promise<{ token: string; sessionId: string }> {
+export async function login(
+  db: DB,
+  passphrase: string,
+  deviceName: string,
+): Promise<{ token: string; sessionId: string }> {
   if (!isSetUp(db)) throw new HttpError(409, "PFAT is not set up yet");
   if (Date.now() < lockedUntil) throw new HttpError(429, "Too many attempts; try again shortly");
   if (!(await verifyPassphrase(db, passphrase))) {

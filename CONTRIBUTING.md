@@ -1,7 +1,7 @@
 # Contributing
 
-Thanks for helping. PFAT is run as a BDFL project: the maintainer has final say on scope and design, guided
-by [VISION.md](VISION.md).
+Thanks for helping. PFAT is run as a BDFL project: the maintainer has final say on scope and design, guided by
+[VISION.md](VISION.md).
 
 ## Before you start
 

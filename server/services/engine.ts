@@ -15,7 +15,15 @@ interface Evaluation {
   body: string;
 }
 
-function evaluate(trigger: Row, link: Row, params: Row, cache: DB, data: DB, todayStr: string, tz?: string): Evaluation | null {
+function evaluate(
+  trigger: Row,
+  link: Row,
+  params: Row,
+  cache: DB,
+  data: DB,
+  todayStr: string,
+  tz?: string,
+): Evaluation | null {
   const what = `${link.asset_name}${link.buy_date ? ` (bought ${link.buy_date})` : ""}`;
   switch (trigger.type) {
     case "sell_on_date": {
@@ -56,10 +64,21 @@ function evaluate(trigger: Row, link: Row, params: Row, cache: DB, data: DB, tod
       const verb = p.direction === "up" ? "risen" : "fallen";
       return {
         fire,
-        observed: { price: price.close, price_date: price.price_date, baseline, baseline_kind: p.baseline, change_pct: change },
+        observed: {
+          price: price.close,
+          price_date: price.price_date,
+          baseline,
+          baseline_kind: p.baseline,
+          change_pct: change,
+        },
         title: `${link.asset_name} has ${verb} ${d.round(change.replace("-", ""), 2)}%`,
-        body: `Price ${price.close} on ${price.price_date} vs baseline ${d.round(baseline, 4)} (${p.baseline.replace("_", " ")}). ` +
-          `Your thesis "${link.thesis_title}" set a ${p.direction === "up" ? "+" : "-"}${p.percent}% trigger.`,
+        body:
+          `Price ${price.close} on ${price.price_date} vs baseline ${d.round(baseline, 4)} (${
+            p.baseline.replace("_", " ")
+          }). ` +
+          `Your thesis "${link.thesis_title}" set a ${
+            p.direction === "up" ? "+" : "-"
+          }${p.percent}% trigger.`,
       };
     }
   }
@@ -88,7 +107,9 @@ export function evaluateTriggers(data: DB, cache: DB, todayStr: string): number 
 
     for (const link of links) {
       // Fully sold purchases have nothing left to act on.
-      if (link.buy_trade_id && d.sign(openQty(data, getTrade(data, link.buy_trade_id as string))) === 0) continue;
+      if (link.buy_trade_id && d.sign(openQty(data, getTrade(data, link.buy_trade_id as string))) === 0) {
+        continue;
+      }
       // One alert per trigger version per link: adjusting the trigger re-arms it.
       const already = data.prepare(
         "SELECT 1 FROM trigger_firings WHERE trigger_id = ? AND link_id = ? AND (closed_at IS NULL OR fired_at >= ?)",
@@ -108,8 +129,17 @@ export function evaluateTriggers(data: DB, cache: DB, todayStr: string): number 
         data.prepare(
           `INSERT INTO trigger_firings(id, trigger_id, link_id, observed, fired_at, notification_id)
            VALUES (?, ?, ?, ?, ?, ?)`,
-        ).run(uuidv7(), trigger.id as string, link.id as string, JSON.stringify(ev.observed), Date.now(), notificationId);
-        data.prepare("UPDATE theses SET status = 'triggered', updated_at = ? WHERE id = ? AND status = 'active'")
+        ).run(
+          uuidv7(),
+          trigger.id as string,
+          link.id as string,
+          JSON.stringify(ev.observed),
+          Date.now(),
+          notificationId,
+        );
+        data.prepare(
+          "UPDATE theses SET status = 'triggered', updated_at = ? WHERE id = ? AND status = 'active'",
+        )
           .run(Date.now(), trigger.thesis_id as string);
       });
       fired++;

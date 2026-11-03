@@ -32,7 +32,9 @@ export function getThesis(db: DB, id: string): Row {
     claims: db.prepare("SELECT * FROM claims WHERE thesis_id = ? ORDER BY status, next_review_on").all(id),
     triggers: db.prepare("SELECT * FROM triggers WHERE thesis_id = ? ORDER BY status, created_at").all(id)
       .map(presentTrigger),
-    reasoning: db.prepare("SELECT * FROM reasoning_entries WHERE thesis_id = ? ORDER BY created_at DESC").all(id),
+    reasoning: db.prepare("SELECT * FROM reasoning_entries WHERE thesis_id = ? ORDER BY created_at DESC").all(
+      id,
+    ),
   };
 }
 
@@ -82,7 +84,9 @@ export function updateThesis(db: DB, id: string, body: Obj): Row {
         if (next !== "active") throw conflict(`A ${from} thesis can only be re-opened as active`);
         set("closed_at", null);
       }
-      if (next === "triggered") throw badRequest("Theses become 'triggered' automatically when a trigger fires");
+      if (next === "triggered") {
+        throw badRequest("Theses become 'triggered' automatically when a trigger fires");
+      }
       if (next === "closed") {
         set("retrospective", v.reqStr(body, "retrospective", { max: 10_000 }));
         set("outcome", v.oneOf(body, "outcome", OUTCOMES)!);
@@ -142,7 +146,9 @@ export function createLink(db: DB, thesisId: string, body: Obj): Row {
   if (asset.tracking === "trades") {
     if (!buyId) throw badRequest("Link a specific purchase ('buy_trade_id') for trade-tracked assets");
     const buy = getTrade(db, buyId);
-    if (buy.asset_id !== asset.id || buy.side !== "buy") throw badRequest("That trade is not a purchase of this asset");
+    if (buy.asset_id !== asset.id || buy.side !== "buy") {
+      throw badRequest("That trade is not a purchase of this asset");
+    }
   } else if (buyId) {
     throw badRequest("Value-tracked assets link to the asset, not a purchase");
   }
@@ -153,7 +159,9 @@ export function createLink(db: DB, thesisId: string, body: Obj): Row {
   if (dup) throw conflict("Already linked");
   const id = uuidv7();
   return transaction(db, () => {
-    db.prepare("INSERT INTO thesis_links(id, thesis_id, asset_id, buy_trade_id, linked_at) VALUES (?, ?, ?, ?, ?)")
+    db.prepare(
+      "INSERT INTO thesis_links(id, thesis_id, asset_id, buy_trade_id, linked_at) VALUES (?, ?, ?, ?, ?)",
+    )
       .run(id, thesisId, asset.id as string, buyId ?? null, Date.now());
     const link = db.prepare("SELECT * FROM thesis_links WHERE id = ?").get(id) as Row;
     recordRevision(db, "thesis_link", id, "create", link, note(body));
@@ -168,9 +176,20 @@ export function unlink(db: DB, linkId: string, body: Obj): void {
   if (link.unlinked_at) return;
   const reason = v.reqStr(body, "reason", { max: 2000 });
   transaction(db, () => {
-    db.prepare("UPDATE thesis_links SET unlinked_at = ?, unlink_reason = ? WHERE id = ?").run(Date.now(), reason, linkId);
+    db.prepare("UPDATE thesis_links SET unlinked_at = ?, unlink_reason = ? WHERE id = ?").run(
+      Date.now(),
+      reason,
+      linkId,
+    );
     closeFirings(db, { linkId }, "dismissed", `Unlinked: ${reason}`);
-    recordRevision(db, "thesis_link", linkId, "unlink", db.prepare("SELECT * FROM thesis_links WHERE id = ?").get(linkId) as Row, reason);
+    recordRevision(
+      db,
+      "thesis_link",
+      linkId,
+      "unlink",
+      db.prepare("SELECT * FROM thesis_links WHERE id = ?").get(linkId) as Row,
+      reason,
+    );
     touch(db, link.thesis_id as string);
   });
 }
@@ -192,7 +211,15 @@ export function createClaim(db: DB, thesisId: string, body: Obj, todayStr: strin
     db.prepare(
       `INSERT INTO claims(id, thesis_id, statement, review_every_days, next_review_on, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`,
-    ).run(id, thesisId, v.reqStr(body, "statement", { max: 2000 }), every, addDays(todayStr, every), now, now);
+    ).run(
+      id,
+      thesisId,
+      v.reqStr(body, "statement", { max: 2000 }),
+      every,
+      addDays(todayStr, every),
+      now,
+      now,
+    );
     recordRevision(db, "claim", id, "create", getClaim(db, id), note(body));
     touch(db, thesisId);
     return getClaim(db, id);
@@ -202,10 +229,19 @@ export function createClaim(db: DB, thesisId: string, body: Obj, todayStr: strin
 export function updateClaim(db: DB, id: string, body: Obj, todayStr: string): Row {
   const c = getClaim(db, id);
   return transaction(db, () => {
-    if (v.has(body, "statement")) db.prepare("UPDATE claims SET statement = ? WHERE id = ?").run(v.reqStr(body, "statement", { max: 2000 }), id);
+    if (v.has(body, "statement")) {
+      db.prepare("UPDATE claims SET statement = ? WHERE id = ?").run(
+        v.reqStr(body, "statement", { max: 2000 }),
+        id,
+      );
+    }
     if (v.has(body, "review_every_days")) {
       const every = v.int(body, "review_every_days", { min: 1, max: 3650 })!;
-      db.prepare("UPDATE claims SET review_every_days = ?, next_review_on = ? WHERE id = ?").run(every, addDays(todayStr, every), id);
+      db.prepare("UPDATE claims SET review_every_days = ?, next_review_on = ? WHERE id = ?").run(
+        every,
+        addDays(todayStr, every),
+        id,
+      );
     }
     let action: "update" | "retire" = "update";
     if (v.has(body, "status")) {
@@ -242,7 +278,13 @@ export function listClaimReviews(db: DB, claimId: string): Row[] {
   return db.prepare("SELECT * FROM claim_reviews WHERE claim_id = ? ORDER BY reviewed_at DESC").all(claimId);
 }
 
-function resolveRefNotifications(db: DB, refType: string, refId: string, resolution: string, resolutionNote: string) {
+function resolveRefNotifications(
+  db: DB,
+  refType: string,
+  refId: string,
+  resolution: string,
+  resolutionNote: string,
+) {
   db.prepare(
     `UPDATE notifications SET status = 'resolved', resolution = ?, resolution_note = ?, resolved_at = ?
      WHERE ref_type = ? AND ref_id = ? AND status <> 'resolved'`,
@@ -288,8 +330,9 @@ export function validateTriggerParams(type: string, p: unknown): Row {
         from: v.oneOf(o, "from", ["purchase", "trigger_created"] as const, { optional: true }) ?? "purchase",
       };
     case "pct_change": {
-      const baseline = v.oneOf(o, "baseline", ["avg_cost", "purchase_price", "fixed"] as const, { optional: true }) ??
-        "avg_cost";
+      const baseline =
+        v.oneOf(o, "baseline", ["avg_cost", "purchase_price", "fixed"] as const, { optional: true }) ??
+          "avg_cost";
       const out: Row = {
         direction: v.oneOf(o, "direction", ["up", "down"] as const)!,
         percent: v.dec(o, "percent", { positive: true })!,
@@ -323,7 +366,15 @@ export function createTrigger(db: DB, thesisId: string, body: Obj): Row {
     db.prepare(
       `INSERT INTO triggers(id, thesis_id, type, params, label, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`,
-    ).run(id, thesisId, type, JSON.stringify(params), v.str(body, "label", { optional: true, max: 200 }) ?? "", now, now);
+    ).run(
+      id,
+      thesisId,
+      type,
+      JSON.stringify(params),
+      v.str(body, "label", { optional: true, max: 200 }) ?? "",
+      now,
+      now,
+    );
     recordRevision(db, "trigger", id, "create", getTrigger(db, id), note(body));
     touch(db, thesisId);
     return getTrigger(db, id);
@@ -338,9 +389,17 @@ export function updateTrigger(db: DB, id: string, body: Obj): Row {
   return transaction(db, () => {
     let action: "update" | "retire" = "update";
     if (v.has(body, "params")) {
-      db.prepare("UPDATE triggers SET params = ? WHERE id = ?").run(JSON.stringify(validateTriggerParams(t.type as string, body.params)), id);
+      db.prepare("UPDATE triggers SET params = ? WHERE id = ?").run(
+        JSON.stringify(validateTriggerParams(t.type as string, body.params)),
+        id,
+      );
     }
-    if (v.has(body, "label")) db.prepare("UPDATE triggers SET label = ? WHERE id = ?").run(v.str(body, "label", { optional: true, max: 200 }) ?? "", id);
+    if (v.has(body, "label")) {
+      db.prepare("UPDATE triggers SET label = ? WHERE id = ?").run(
+        v.str(body, "label", { optional: true, max: 200 }) ?? "",
+        id,
+      );
+    }
     if (v.has(body, "status")) {
       if (v.oneOf(body, "status", ["active", "retired"] as const) === "retired") {
         db.prepare("UPDATE triggers SET status = 'retired' WHERE id = ?").run(id);
@@ -348,7 +407,12 @@ export function updateTrigger(db: DB, id: string, body: Obj): Row {
       }
     }
     db.prepare("UPDATE triggers SET updated_at = ? WHERE id = ?").run(Date.now(), id);
-    closeFirings(db, { triggerId: id }, "adjusted", why || (action === "retire" ? "Trigger removed" : "Trigger adjusted"));
+    closeFirings(
+      db,
+      { triggerId: id },
+      "adjusted",
+      why || (action === "retire" ? "Trigger removed" : "Trigger adjusted"),
+    );
     recordRevision(db, "trigger", id, action, getTrigger(db, id), why);
     touch(db, t.thesis_id as string);
     return getTrigger(db, id);
@@ -356,7 +420,11 @@ export function updateTrigger(db: DB, id: string, body: Obj): Row {
 }
 
 export function thesisHistory(db: DB, thesisId: string): Row[] {
-  const out: Row[] = listRevisions(db, "thesis", thesisId).map((r) => ({ ...r, entity_type: "thesis", entity_id: thesisId }));
+  const out: Row[] = listRevisions(db, "thesis", thesisId).map((r) => ({
+    ...r,
+    entity_type: "thesis",
+    entity_id: thesisId,
+  }));
   const children: [string, "thesis_link" | "claim" | "trigger"][] = [
     ["SELECT id FROM thesis_links WHERE thesis_id = ?", "thesis_link"],
     ["SELECT id FROM claims WHERE thesis_id = ?", "claim"],
@@ -364,7 +432,13 @@ export function thesisHistory(db: DB, thesisId: string): Row[] {
   ];
   for (const [sql, type] of children) {
     for (const row of db.prepare(sql).all(thesisId)) {
-      out.push(...listRevisions(db, type, row.id as string).map((r) => ({ ...r, entity_type: type, entity_id: row.id })));
+      out.push(
+        ...listRevisions(db, type, row.id as string).map((r) => ({
+          ...r,
+          entity_type: type,
+          entity_id: row.id,
+        })),
+      );
     }
   }
   return out.sort((a, b) => Number(b.created_at) - Number(a.created_at));
