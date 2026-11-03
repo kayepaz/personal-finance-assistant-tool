@@ -35,15 +35,22 @@ export function migrate(db: DB, set: "data" | "cache"): number[] {
     const version = Number(name.slice(0, 4));
     if (version <= current) continue;
     const sql = Deno.readTextFileSync(new URL(name, dir));
-    transaction(db, () => {
-      db.exec(sql);
-      db.exec(`PRAGMA user_version = ${version}`);
-    });
+    // Table rebuilds need foreign keys off (dropping a parent table would otherwise cascade-delete children).
+    // The pragma is ignored inside a transaction, so toggle it outside and verify integrity before committing.
+    db.exec("PRAGMA foreign_keys = OFF");
+    try {
+      transaction(db, () => {
+        db.exec(sql);
+        const fkProblems = db.prepare("PRAGMA foreign_key_check").all();
+        if (fkProblems.length) {
+          throw new Error(`Migration ${name} broke foreign keys: ${JSON.stringify(fkProblems.slice(0, 5))}`);
+        }
+        db.exec(`PRAGMA user_version = ${version}`);
+      });
+    } finally {
+      db.exec("PRAGMA foreign_keys = ON");
+    }
     applied.push(version);
-  }
-  const fkProblems = db.prepare("PRAGMA foreign_key_check").all();
-  if (fkProblems.length) {
-    throw new Error(`Foreign key check failed after migration: ${JSON.stringify(fkProblems)}`);
   }
   return applied;
 }

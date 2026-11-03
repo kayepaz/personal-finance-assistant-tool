@@ -9,6 +9,8 @@ import * as accounts from "./services/accounts.ts";
 import * as instruments from "./services/instruments.ts";
 import * as assets from "./services/assets.ts";
 import * as theses from "./services/theses.ts";
+import * as claims from "./services/claims.ts";
+import * as triggers from "./services/triggers.ts";
 import * as notes from "./services/notifications.ts";
 import * as prices from "./services/prices.ts";
 import { type JobReport, runJobs } from "./services/engine.ts";
@@ -182,27 +184,50 @@ function buildRouter(opts: AppOptions): Router<State> {
   );
   r.post("/api/links/:id/unlink", async (c) => theses.unlink(data(c), c.params.id, await c.body()));
   r.post(
-    "/api/theses/:id/claims",
-    async (c) => json(theses.createClaim(data(c), c.params.id, await c.body(), c.state.today()), 201),
-  );
-  r.patch(
-    "/api/claims/:id",
-    async (c) => theses.updateClaim(data(c), c.params.id, await c.body(), c.state.today()),
-  );
-  r.get("/api/claims/:id/reviews", (c) => theses.listClaimReviews(data(c), c.params.id));
-  r.post(
-    "/api/claims/:id/reviews",
-    async (c) => json(theses.reviewClaim(data(c), c.params.id, await c.body(), c.state.today()), 201),
-  );
-  r.post(
     "/api/theses/:id/reasoning",
     async (c) => json(theses.addReasoning(data(c), c.params.id, await c.body()), 201),
   );
+
+  // Attach an existing claim/trigger to a thesis; detach by attachment id.
+  r.post(
+    "/api/theses/:id/claims",
+    async (c) => json(claims.attachClaim(data(c), c.params.id, await c.body()), 201),
+  );
+  r.post(
+    "/api/thesis-claims/:id/detach",
+    async (c) => claims.detachClaim(data(c), c.params.id, await c.body()),
+  );
   r.post(
     "/api/theses/:id/triggers",
-    async (c) => json(theses.createTrigger(data(c), c.params.id, await c.body()), 201),
+    async (c) => json(triggers.attachTrigger(data(c), c.params.id, await c.body()), 201),
   );
-  r.patch("/api/triggers/:id", async (c) => theses.updateTrigger(data(c), c.params.id, await c.body()));
+  r.post(
+    "/api/thesis-triggers/:id/detach",
+    async (c) => triggers.detachTrigger(data(c), c.params.id, await c.body()),
+  );
+
+  // ----- claims library -----
+  r.get("/api/claims", (c) => claims.listClaims(data(c), c.url.searchParams.get("status") ?? undefined));
+  r.post("/api/claims", async (c) => json(claims.createClaim(data(c), await c.body(), c.state.today()), 201));
+  r.get("/api/claims/:id", (c) => claims.getClaim(data(c), c.params.id));
+  r.patch(
+    "/api/claims/:id",
+    async (c) => claims.updateClaim(data(c), c.params.id, await c.body(), c.state.today()),
+  );
+  r.get("/api/claims/:id/reviews", (c) => claims.listClaimReviews(data(c), c.params.id));
+  r.post(
+    "/api/claims/:id/reviews",
+    async (c) => json(claims.reviewClaim(data(c), c.params.id, await c.body(), c.state.today()), 201),
+  );
+
+  // ----- triggers library -----
+  r.get(
+    "/api/triggers",
+    (c) => triggers.listTriggers(data(c), c.url.searchParams.get("status") ?? undefined),
+  );
+  r.post("/api/triggers", async (c) => json(triggers.createTrigger(data(c), await c.body()), 201));
+  r.get("/api/triggers/:id", (c) => triggers.getTrigger(data(c), c.params.id));
+  r.patch("/api/triggers/:id", async (c) => triggers.updateTrigger(data(c), c.params.id, await c.body()));
 
   // ----- notifications -----
   r.get(

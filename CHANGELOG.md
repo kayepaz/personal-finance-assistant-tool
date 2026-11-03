@@ -6,6 +6,9 @@ All notable changes are documented here. The project follows [Semantic Versionin
 
 ### Added
 
+- Claims and triggers are a shared library: attach one to many theses, pick existing ones or "Add new" from a
+  thesis, and manage them on the new Claims and Triggers pages (migration `0002`).
+
 - Deno server with two SQLite databases (`data.db`, `cache.db`) and a numbered migration runner.
 - Passphrase setup, login, and per-device revocable sessions.
 - Accounts, instruments, assets, trades with sale allocation to specific purchases.
@@ -16,3 +19,7 @@ All notable changes are documented here. The project follows [Semantic Versionin
 - Alpha Vantage and Finnhub daily prices with per-day quota tracking, deferral, and consent.
 - In-process scheduler.
 - PWA client with no build step.
+
+### Fixed
+
+- `.gitignore` hid `server/db/migrations/data/`, so the main schema was never committed.

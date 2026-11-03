@@ -21,9 +21,9 @@ The SQL migrations are the source of truth:
 ```
 accounts ──< assets ──< trades ──< sale_allocations >── trades (buys)
    │           │           │
-   │           └──< thesis_links >── theses ──< claims ──< claim_reviews
+   │           └──< thesis_links >── theses ──< thesis_claims >── claims ──< claim_reviews
    │                       │            ├──< reasoning_entries
-   │                       │            └──< triggers ──< trigger_firings >── notifications
+   │                       │            └──< thesis_triggers >── triggers ──< trigger_firings >── notifications
    └──< account_snapshots  └── (buy_trade_id: which purchase this thesis covers)
 instruments ──< assets
 revisions  (append-only snapshots of theses, links, claims, triggers)
@@ -37,8 +37,10 @@ sessions, settings
   (managed portfolio, house, art; value comes from snapshots).
 - A sell must allocate its full quantity to open buys of the same asset; a buy can't be over-allocated.
 - Thesis links on trade-tracked assets point at a buy; links on value-tracked assets point at the asset only.
-- A trigger is evaluated for every active link of its thesis. A firing stays open until its notification is
-  resolved, so the same trigger/link pair never alerts twice in a row.
+- Claims and triggers are shared: `thesis_claims` / `thesis_triggers` attach them to theses (detaching keeps
+  the row with a reason). A trigger is evaluated for every active link of every thesis it is attached to. A
+  firing stays open until its notification is resolved, so the same trigger/link pair never alerts twice in a
+  row.
 - Every create/update/retire/unlink of a thesis, link, claim or trigger writes a revision row in the same
   transaction.
 - `pct_change` baselines: `avg_cost` (open buys of the asset, weighted), `purchase_price` (the linked buy;

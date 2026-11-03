@@ -208,8 +208,13 @@ function todoCard(nav: Nav, n: J): HTMLElement {
     actions = [
       h(
         "button",
-        { onclick: () => nav.go(`/theses/${f.thesis_id}#trigger-${f.trigger_id}`) },
+        { onclick: () => nav.go(`/triggers/${f.trigger_id}`) },
         "Adjust trigger",
+      ),
+      h(
+        "button",
+        { onclick: () => nav.go(`/theses/${f.thesis_id}#trigger-${f.trigger_id}`) },
+        "Change triggers on this thesis",
       ),
       details(
         "I sold",
@@ -233,8 +238,10 @@ function todoCard(nav: Nav, n: J): HTMLElement {
     context = h(
       "p",
       { class: "meta" },
-      "Thesis: ",
-      link(nav, `/theses/${n.claim.thesis_id}`, n.claim.thesis_title),
+      n.claim.theses.length > 1 ? "Theses: " : "Thesis: ",
+      n.claim.theses.flatMap((t: J, i: number) => [i ? ", " : "", link(nav, `/theses/${t.id}`, t.title)]),
+      " · ",
+      link(nav, `/claims/${n.claim.id}`, "Open claim"),
     );
     actions = [
       h(
@@ -429,10 +436,12 @@ function paramsFrom(type: string, d: Record<string, string>): J {
 }
 
 export async function thesisView(nav: Nav, id: string): Promise<HTMLElement> {
-  const [t, history, assets] = await Promise.all([
+  const [t, history, assets, claimLibrary, triggerLibrary] = await Promise.all([
     get(`/theses/${id}`),
     get<J[]>(`/theses/${id}/history`),
     get<J[]>("/assets"),
+    get<J[]>("/claims?status=active"),
+    get<J[]>("/triggers?status=active"),
   ]);
   const update = (body: J) => patch(`/theses/${id}`, body).then(() => nav.refresh());
   const open = t.status !== "closed" && t.status !== "abandoned";
@@ -573,12 +582,65 @@ export async function thesisView(nav: Nav, id: string): Promise<HTMLElement> {
       : null,
   );
 
-  // --- claims
+  // --- claims & triggers (shared library; edits happen on their own pages and apply everywhere)
+  const usedBy = (n: number) => (n > 1 ? ` · shared by ${n} theses` : "");
+  const attachPicker = (
+    kind: "claims" | "triggers",
+    library: J[],
+    attachedIds: Set<string>,
+    describe: (x: J) => string,
+  ) => {
+    const choices = library.filter((x) => !attachedIds.has(x.id));
+    const picker = select("pick", [
+      [
+        "",
+        choices.length
+          ? "Choose an existing one…"
+          : library.length
+          ? "All already added"
+          : "Nothing to reuse yet",
+      ],
+      ...choices.map((x): [string, string] => [x.id, describe(x)]),
+      ["__new", "+ Add new…"],
+    ]);
+    return h(
+      "form",
+      {
+        class: "row-form",
+        onsubmit: onSubmit(nav, async (d) => {
+          if (!d.pick) throw new Error("Choose one, or pick “Add new…”");
+          if (d.pick === "__new") return nav.go(`/${kind}/new?thesis=${id}`);
+          await post(
+            `/theses/${id}/${kind}`,
+            kind === "claims" ? { claim_id: d.pick } : { trigger_id: d.pick },
+          );
+          nav.refresh();
+        }),
+      },
+      picker,
+      h("button", { type: "submit", class: "primary" }, "Add"),
+    );
+  };
+  const detachForm = (path: string) =>
+    details(
+      "Remove from thesis",
+      h(
+        "form",
+        { onsubmit: onSubmit(nav, (d) => post(path, { reason: d.reason }).then(() => nav.refresh())) },
+        field("Why?", input("reason", { required: true })),
+        h("button", { type: "submit" }, "Remove"),
+      ),
+    );
+
   const claims = h(
     "div",
     { class: "panel" },
     h("h2", null, "Claims"),
-    h("p", { class: "hint" }, "Statements you re-check on a schedule."),
+    h(
+      "p",
+      { class: "hint" },
+      "Statements you re-check on a schedule. One review covers every thesis using the claim.",
+    ),
     t.claims.length
       ? h(
         "ul",
@@ -587,118 +649,28 @@ export async function thesisView(nav: Nav, id: string): Promise<HTMLElement> {
           h(
             "li",
             { class: c.status === "retired" ? "retired" : "" },
-            h("strong", null, c.statement),
+            link(nav, `/claims/${c.id}`, h("strong", null, c.statement)),
             h(
               "span",
               { class: "meta" },
               c.status === "retired"
                 ? "Retired"
-                : `Review every ${c.review_every_days} days · next ${c.next_review_on}`,
+                : `Review every ${c.review_every_days} days · next ${c.next_review_on}${
+                  usedBy(c.thesis_count)
+                }`,
             ),
-            c.status === "active"
-              ? h(
-                "div",
-                { class: "actions" },
-                details(
-                  "Review now",
-                  h(
-                    "form",
-                    {
-                      onsubmit: onSubmit(
-                        nav,
-                        (d) => post(`/claims/${c.id}/reviews`, d).then(() => nav.refresh()),
-                      ),
-                    },
-                    field(
-                      "Verdict",
-                      select("verdict", [["still_true", "Still true"], ["weakened", "Weakened"], [
-                        "no_longer_true",
-                        "No longer true",
-                      ]]),
-                    ),
-                    field("Note", textarea("note")),
-                    h("button", { type: "submit", class: "primary" }, "Record review"),
-                  ),
-                ),
-                details(
-                  "Edit",
-                  h(
-                    "form",
-                    {
-                      onsubmit: onSubmit(nav, (d) =>
-                        patch(`/claims/${c.id}`, {
-                          statement: d.statement,
-                          review_every_days: Number(d.review_every_days),
-                          note: d.note,
-                        }).then(() => nav.refresh())),
-                    },
-                    field("Statement", textarea("statement", { required: true }, c.statement)),
-                    field(
-                      "Review every (days)",
-                      input("review_every_days", {
-                        type: "number",
-                        min: 1,
-                        required: true,
-                        value: c.review_every_days,
-                      }),
-                    ),
-                    field("Why the change?", input("note")),
-                    h("button", { type: "submit" }, "Save"),
-                  ),
-                ),
-                details(
-                  "Retire",
-                  h(
-                    "form",
-                    {
-                      onsubmit: onSubmit(nav, (d) =>
-                        patch(`/claims/${c.id}`, { status: "retired", note: d.note }).then(() =>
-                          nav.refresh()
-                        )),
-                    },
-                    field("Why?", input("note", { required: true })),
-                    h("button", { type: "submit" }, "Retire claim"),
-                  ),
-                ),
-              )
+            open
+              ? h("div", { class: "actions" }, detachForm(`/thesis-claims/${c.attachment_id}/detach`))
               : null,
           )
         ),
       )
       : empty("No claims yet."),
     open
-      ? details(
-        "Add a claim",
-        h(
-          "form",
-          {
-            onsubmit: onSubmit(nav, (d) =>
-              post(`/theses/${id}/claims`, {
-                statement: d.statement,
-                review_every_days: Number(d.review_every_days),
-              }).then(() => nav.refresh())),
-          },
-          field(
-            "Statement",
-            textarea("statement", { required: true, placeholder: "e.g. The company has a strong product" }),
-          ),
-          field(
-            "Review every (days)",
-            input("review_every_days", { type: "number", min: 1, value: 90, required: true }),
-          ),
-          h("button", { type: "submit", class: "primary" }, "Add claim"),
-        ),
-      )
+      ? attachPicker("claims", claimLibrary, new Set(t.claims.map((c: J) => c.id)), (c) => c.statement)
       : null,
   );
 
-  // --- triggers
-  const typePicker = select("type", [["pct_change", "Price change %"], ["sell_on_date", "Sell on a date"], [
-    "sell_after_days",
-    "Sell after N days",
-  ]]);
-  const paramBox = h("div", null, triggerParamFields("pct_change"));
-  typePicker.addEventListener("change", () => paramBox.replaceChildren(triggerParamFields(typePicker.value)));
   const triggers = h(
     "div",
     { class: "panel" },
@@ -712,69 +684,27 @@ export async function thesisView(nav: Nav, id: string): Promise<HTMLElement> {
           h(
             "li",
             { id: `trigger-${g.id}`, class: g.status === "retired" ? "retired" : "" },
-            h("strong", null, g.label || triggerSummary(g)),
-            g.label ? h("span", { class: "meta" }, triggerSummary(g)) : null,
-            g.status === "retired" ? h("span", { class: "meta" }, "Removed") : h(
-              "div",
-              { class: "actions" },
-              details(
-                "Adjust",
-                h(
-                  "form",
-                  {
-                    onsubmit: onSubmit(nav, (d) =>
-                      patch(`/triggers/${g.id}`, {
-                        params: paramsFrom(g.type, d),
-                        label: d.label ?? "",
-                        note: d.note,
-                      }).then(() => nav.refresh())),
-                  },
-                  triggerParamFields(g.type, g.params),
-                  field("Label", input("label", { value: g.label })),
-                  field("Why the change?", input("note", { placeholder: "e.g. widening my stop to 20%" })),
-                  h("button", { type: "submit", class: "primary" }, "Save"),
-                ),
-              ),
-              details(
-                "Remove",
-                h(
-                  "form",
-                  {
-                    onsubmit: onSubmit(nav, (d) =>
-                      patch(`/triggers/${g.id}`, { status: "retired", note: d.note }).then(() =>
-                        nav.refresh()
-                      )),
-                  },
-                  field("Why?", input("note", { required: true })),
-                  h("button", { type: "submit" }, "Remove trigger"),
-                ),
-              ),
+            link(nav, `/triggers/${g.id}`, h("strong", null, g.label || triggerSummary(g))),
+            h(
+              "span",
+              { class: "meta" },
+              `${g.label ? triggerSummary(g) : ""}${g.status === "retired" ? " · Retired" : ""}${
+                usedBy(g.thesis_count)
+              }`,
             ),
+            open
+              ? h("div", { class: "actions" }, detachForm(`/thesis-triggers/${g.attachment_id}/detach`))
+              : null,
           )
         ),
       )
       : empty("No triggers yet."),
     open
-      ? details(
-        "Add a trigger",
-        h(
-          "form",
-          {
-            onsubmit: onSubmit(
-              nav,
-              (d) =>
-                post(`/theses/${id}/triggers`, {
-                  type: d.type,
-                  label: d.label,
-                  params: paramsFrom(d.type, d),
-                }).then(() => nav.refresh()),
-            ),
-          },
-          field("Type", typePicker),
-          paramBox,
-          field("Label (optional)", input("label")),
-          h("button", { type: "submit", class: "primary" }, "Add trigger"),
-        ),
+      ? attachPicker(
+        "triggers",
+        triggerLibrary,
+        new Set(t.triggers.map((g: J) => g.id)),
+        (g) => (g.label ? `${g.label} — ${triggerSummary(g)}` : triggerSummary(g)),
       )
       : null,
   );
@@ -808,7 +738,7 @@ export async function thesisView(nav: Nav, id: string): Promise<HTMLElement> {
 
   // --- history
   const historyPanel = details(
-    `History (${history.length} changes)`,
+    `History (${history.length} change${history.length === 1 ? "" : "s"})`,
     h(
       "ol",
       { class: "history" },
@@ -1408,5 +1338,406 @@ export async function settingsView(nav: Nav, onSignOut: () => void): Promise<HTM
         },
       }, "Sign out"),
     ),
+  );
+}
+
+// ---------------------------------------------------------------- claims library
+
+const VERDICT_OPTIONS: [string, string][] = [
+  ["still_true", "Still true"],
+  ["weakened", "Weakened"],
+  ["no_longer_true", "No longer true"],
+];
+
+function usedByPanel(nav: Nav, theses: J[], what: string): HTMLElement {
+  return h(
+    "div",
+    { class: "panel" },
+    h("h2", null, `Used by ${theses.length} ${theses.length === 1 ? "thesis" : "theses"}`),
+    theses.length
+      ? h(
+        "ul",
+        { class: "list" },
+        theses.map((t) =>
+          h("li", null, link(nav, `/theses/${t.id}`, h("strong", null, t.title)), " ", badge(t.status))
+        ),
+      )
+      : empty(`This ${what} isn't attached to any thesis. Add it from a thesis page.`),
+  );
+}
+
+function historyList(history: J[]): HTMLElement {
+  return details(
+    `History (${history.length} change${history.length === 1 ? "" : "s"})`,
+    h(
+      "ol",
+      { class: "history" },
+      history.map((r) =>
+        h(
+          "li",
+          null,
+          h("time", null, new Date(r.created_at).toLocaleString()),
+          ` ${label(r.action)}`,
+          r.note ? h("em", null, ` — ${r.note}`) : null,
+        )
+      ),
+    ),
+  );
+}
+
+function sharedWarning(count: number): HTMLElement | null {
+  return count > 1 ? h("p", { class: "warn" }, `Changes apply to all ${count} theses that use this.`) : null;
+}
+
+export async function claimsView(nav: Nav): Promise<HTMLElement> {
+  const claims = await get<J[]>("/claims");
+  return h(
+    "section",
+    null,
+    h(
+      "header",
+      { class: "page-head" },
+      h("h1", null, "Claims"),
+      h("p", { class: "sub" }, "Reusable statements you re-check on a schedule. Attach them to any thesis."),
+    ),
+    h(
+      "div",
+      { class: "actions" },
+      h("button", { class: "primary", onclick: () => nav.go("/claims/new") }, "New claim"),
+    ),
+    claims.length
+      ? h(
+        "ul",
+        { class: "list" },
+        claims.map((c) =>
+          h(
+            "li",
+            { class: c.status === "retired" ? "retired" : "" },
+            link(nav, `/claims/${c.id}`, h("strong", null, c.statement)),
+            h(
+              "span",
+              { class: "meta" },
+              [
+                c.status === "retired" ? "Retired" : `Next review ${c.next_review_on}`,
+                `${c.thesis_count} ${c.thesis_count === 1 ? "thesis" : "theses"}`,
+                c.last_verdict ? `last verdict: ${label(c.last_verdict).toLowerCase()}` : "",
+              ].filter(Boolean).join(" · "),
+            ),
+          )
+        ),
+      )
+      : empty("No claims yet."),
+  );
+}
+
+async function backTo(thesisId: string | null): Promise<J | null> {
+  return thesisId ? await get(`/theses/${thesisId}`).catch(() => null) : null;
+}
+
+export async function claimNewView(nav: Nav, thesisId: string | null): Promise<HTMLElement> {
+  const thesis = await backTo(thesisId);
+  return h(
+    "section",
+    null,
+    h(
+      "p",
+      { class: "crumbs" },
+      thesis ? link(nav, `/theses/${thesis.id}`, thesis.title) : link(nav, "/claims", "Claims"),
+    ),
+    h(
+      "header",
+      { class: "page-head" },
+      h("h1", null, "New claim"),
+      thesis ? h("p", { class: "sub" }, `Will be added to “${thesis.title}”.`) : null,
+    ),
+    h(
+      "form",
+      {
+        class: "panel",
+        onsubmit: onSubmit(nav, async (d) => {
+          const c = await post("/claims", {
+            statement: d.statement,
+            review_every_days: Number(d.review_every_days),
+            thesis_id: thesis?.id,
+          });
+          nav.go(thesis ? `/theses/${thesis.id}` : `/claims/${c.id}`);
+        }),
+      },
+      field(
+        "Statement",
+        textarea("statement", { required: true, placeholder: "e.g. The company has a strong product" }),
+      ),
+      field(
+        "Review every (days)",
+        input("review_every_days", { type: "number", min: 1, value: 90, required: true }),
+      ),
+      h("button", { type: "submit", class: "primary" }, thesis ? "Create and add to thesis" : "Create claim"),
+    ),
+  );
+}
+
+export async function claimView(nav: Nav, id: string): Promise<HTMLElement> {
+  const c = await get(`/claims/${id}`);
+  const active = c.status === "active";
+  return h(
+    "section",
+    null,
+    h("p", { class: "crumbs" }, link(nav, "/claims", "Claims")),
+    h(
+      "header",
+      { class: "page-head" },
+      h("h1", null, c.statement, " ", badge(active ? "active" : "retired")),
+      h(
+        "p",
+        { class: "sub" },
+        active ? `Review every ${c.review_every_days} days · next ${c.next_review_on}` : "Retired",
+      ),
+    ),
+    h(
+      "div",
+      { class: "grid" },
+      active
+        ? h(
+          "div",
+          { class: "panel" },
+          h("h2", null, "Review"),
+          h(
+            "form",
+            { onsubmit: onSubmit(nav, (d) => post(`/claims/${id}/reviews`, d).then(() => nav.refresh())) },
+            field("Verdict", select("verdict", VERDICT_OPTIONS)),
+            field("Note", textarea("note", { placeholder: "What did you check?" })),
+            h("button", { type: "submit", class: "primary" }, "Record review"),
+          ),
+          h(
+            "ul",
+            { class: "notes" },
+            c.reviews.map((r: J) =>
+              h(
+                "li",
+                null,
+                h("time", null, fmtDate(r.reviewed_at)),
+                h("p", null, h("strong", null, label(r.verdict)), r.note ? ` — ${r.note}` : ""),
+              )
+            ),
+          ),
+        )
+        : null,
+      usedByPanel(nav, c.theses, "claim"),
+    ),
+    active
+      ? details(
+        "Edit",
+        h(
+          "form",
+          {
+            onsubmit: onSubmit(nav, (d) =>
+              patch(`/claims/${id}`, {
+                statement: d.statement,
+                review_every_days: Number(d.review_every_days),
+                note: d.note,
+              }).then(() => nav.refresh())),
+          },
+          sharedWarning(c.theses.length),
+          field("Statement", textarea("statement", { required: true }, c.statement)),
+          field(
+            "Review every (days)",
+            input("review_every_days", {
+              type: "number",
+              min: 1,
+              required: true,
+              value: c.review_every_days,
+            }),
+          ),
+          field("Why the change?", input("note")),
+          h("button", { type: "submit", class: "primary" }, "Save"),
+        ),
+      )
+      : null,
+    active
+      ? details(
+        "Retire",
+        h(
+          "form",
+          {
+            onsubmit: onSubmit(nav, (d) =>
+              patch(`/claims/${id}`, { status: "retired", note: d.note }).then(() => nav.refresh())),
+          },
+          sharedWarning(c.theses.length),
+          field("Why?", input("note", { required: true })),
+          h("button", { type: "submit" }, "Retire claim"),
+        ),
+      )
+      : null,
+    historyList(c.history),
+  );
+}
+
+// ---------------------------------------------------------------- triggers library
+
+const TRIGGER_TYPE_OPTIONS: [string, string][] = [
+  ["pct_change", "Price change %"],
+  ["sell_on_date", "Sell on a date"],
+  ["sell_after_days", "Sell after N days"],
+];
+
+export async function triggersView(nav: Nav): Promise<HTMLElement> {
+  const triggers = await get<J[]>("/triggers");
+  return h(
+    "section",
+    null,
+    h(
+      "header",
+      { class: "page-head" },
+      h("h1", null, "Triggers"),
+      h(
+        "p",
+        { class: "sub" },
+        "Reusable sell rules. Attach one to any number of theses; editing it changes it everywhere.",
+      ),
+    ),
+    h(
+      "div",
+      { class: "actions" },
+      h("button", { class: "primary", onclick: () => nav.go("/triggers/new") }, "New trigger"),
+    ),
+    triggers.length
+      ? h(
+        "ul",
+        { class: "list" },
+        triggers.map((g) =>
+          h(
+            "li",
+            { class: g.status === "retired" ? "retired" : "" },
+            link(nav, `/triggers/${g.id}`, h("strong", null, g.label || triggerSummary(g))),
+            h(
+              "span",
+              { class: "meta" },
+              [
+                g.label ? triggerSummary(g) : "",
+                g.status === "retired" ? "Retired" : "",
+                `${g.thesis_count} ${g.thesis_count === 1 ? "thesis" : "theses"}`,
+              ].filter(Boolean).join(" · "),
+            ),
+          )
+        ),
+      )
+      : empty("No triggers yet."),
+  );
+}
+
+export async function triggerNewView(nav: Nav, thesisId: string | null): Promise<HTMLElement> {
+  const thesis = await backTo(thesisId);
+  const typePicker = select("type", TRIGGER_TYPE_OPTIONS);
+  const paramBox = h("div", null, triggerParamFields("pct_change"));
+  typePicker.addEventListener("change", () => paramBox.replaceChildren(triggerParamFields(typePicker.value)));
+  return h(
+    "section",
+    null,
+    h(
+      "p",
+      { class: "crumbs" },
+      thesis ? link(nav, `/theses/${thesis.id}`, thesis.title) : link(nav, "/triggers", "Triggers"),
+    ),
+    h(
+      "header",
+      { class: "page-head" },
+      h("h1", null, "New trigger"),
+      thesis ? h("p", { class: "sub" }, `Will be added to “${thesis.title}”.`) : null,
+    ),
+    h(
+      "form",
+      {
+        class: "panel",
+        onsubmit: onSubmit(nav, async (d) => {
+          const g = await post("/triggers", {
+            type: d.type,
+            label: d.label,
+            params: paramsFrom(d.type, d),
+            thesis_id: thesis?.id,
+          });
+          nav.go(thesis ? `/theses/${thesis.id}` : `/triggers/${g.id}`);
+        }),
+      },
+      field("Type", typePicker),
+      paramBox,
+      field(
+        "Name",
+        input("label", { placeholder: "e.g. Standard 10% stop" }),
+        "A short name makes it easy to reuse.",
+      ),
+      h(
+        "button",
+        { type: "submit", class: "primary" },
+        thesis ? "Create and add to thesis" : "Create trigger",
+      ),
+    ),
+  );
+}
+
+export async function triggerView(nav: Nav, id: string): Promise<HTMLElement> {
+  const g = await get(`/triggers/${id}`);
+  const active = g.status === "active";
+  return h(
+    "section",
+    null,
+    h("p", { class: "crumbs" }, link(nav, "/triggers", "Triggers")),
+    h(
+      "header",
+      { class: "page-head" },
+      h("h1", null, g.label || triggerSummary(g), " ", badge(active ? "active" : "retired")),
+      g.label ? h("p", { class: "sub" }, triggerSummary(g)) : null,
+    ),
+    h(
+      "div",
+      { class: "grid" },
+      active
+        ? h(
+          "div",
+          { class: "panel" },
+          h("h2", null, "Adjust"),
+          h(
+            "form",
+            {
+              onsubmit: onSubmit(nav, (d) =>
+                patch(`/triggers/${id}`, {
+                  params: paramsFrom(g.type, d),
+                  label: d.label ?? "",
+                  note: d.note,
+                }).then(() => {
+                  nav.toast("Trigger updated; any open alerts for it were resolved.", "ok");
+                  nav.refresh();
+                })),
+            },
+            sharedWarning(g.theses.length),
+            triggerParamFields(g.type, g.params),
+            field("Name", input("label", { value: g.label })),
+            field("Why the change?", input("note", { placeholder: "e.g. widening my stop to 20%" })),
+            h("button", { type: "submit", class: "primary" }, "Save"),
+          ),
+          h(
+            "p",
+            { class: "hint" },
+            "To change just one thesis, remove this trigger from it and add a different one.",
+          ),
+        )
+        : null,
+      usedByPanel(nav, g.theses, "trigger"),
+    ),
+    active
+      ? details(
+        "Retire",
+        h(
+          "form",
+          {
+            onsubmit: onSubmit(nav, (d) =>
+              patch(`/triggers/${id}`, { status: "retired", note: d.note }).then(() => nav.refresh())),
+          },
+          sharedWarning(g.theses.length),
+          field("Why?", input("note", { required: true })),
+          h("button", { type: "submit" }, "Retire trigger"),
+        ),
+      )
+      : null,
+    historyList(g.history),
   );
 }

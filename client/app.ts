@@ -12,7 +12,7 @@ document.body.appendChild(toastBox);
 const nav: views.Nav = {
   go(path: string) {
     const [p, hash] = path.split("#");
-    const changed = p !== location.pathname;
+    const changed = p !== location.pathname + location.search;
     if (changed) history.pushState(null, "", path);
     render().then(() => {
       if (hash) document.getElementById(hash)?.scrollIntoView({ block: "center" });
@@ -32,10 +32,14 @@ const nav: views.Nav = {
 handleUnauthorized(() => render());
 addEventListener("popstate", () => render());
 
-const TABS: [string, string][] = [["/", "To do"], ["/theses", "Theses"], ["/accounts", "Accounts"], [
-  "/settings",
-  "Settings",
-]];
+const TABS: [string, string][] = [
+  ["/", "To do"],
+  ["/theses", "Theses"],
+  ["/claims", "Claims"],
+  ["/triggers", "Triggers"],
+  ["/accounts", "Accounts"],
+  ["/settings", "Settings"],
+];
 
 function shell(content: HTMLElement): HTMLElement {
   const here = location.pathname;
@@ -73,11 +77,18 @@ async function render(): Promise<void> {
     if (!status.authenticated) return mount(root, views.loginView(nav, () => nav.go("/")));
 
     const path = location.pathname;
+    const thesisParam = new URLSearchParams(location.search).get("thesis");
     let m: RegExpMatchArray | null;
     let view: HTMLElement;
     if (path === "/") view = await views.todoView(nav);
     else if (path === "/theses") view = await views.thesesView(nav);
     else if ((m = path.match(/^\/theses\/([\w-]+)$/))) view = await views.thesisView(nav, m[1]);
+    else if (path === "/claims") view = await views.claimsView(nav);
+    else if (path === "/claims/new") view = await views.claimNewView(nav, thesisParam);
+    else if ((m = path.match(/^\/claims\/([\w-]+)$/))) view = await views.claimView(nav, m[1]);
+    else if (path === "/triggers") view = await views.triggersView(nav);
+    else if (path === "/triggers/new") view = await views.triggerNewView(nav, thesisParam);
+    else if ((m = path.match(/^\/triggers\/([\w-]+)$/))) view = await views.triggerView(nav, m[1]);
     else if (path === "/accounts") view = await views.accountsView(nav);
     else if ((m = path.match(/^\/accounts\/([\w-]+)$/))) view = await views.accountView(nav, m[1]);
     else if ((m = path.match(/^\/assets\/([\w-]+)$/))) view = await views.assetView(nav, m[1]);

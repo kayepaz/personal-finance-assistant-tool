@@ -43,15 +43,19 @@ calculated.
   assets). Many-to-many: a buy can serve several theses; a thesis spans many buys and assets. Links can be
   removed with a reason.
 - **Claim** — a qualitative statement to re-check every X days. Each review records a verdict and a note.
+  Claims are a shared library: one claim can be attached to many theses, has one review schedule, and one
+  review covers every thesis using it. Managed globally on the Claims page.
 - **Reasoning entry** — free-form notes on a thesis. Not testable.
-- **Trigger** — a quantitative rule on a thesis, evaluated per thesis link. Types in v0.1:
+- **Trigger** — a quantitative rule, kept in a shared library and attachable to many theses. Editing a trigger
+  changes it for every thesis using it; to change one thesis only, swap it for a different trigger there.
+  Evaluated per thesis link of each thesis it is attached to. Managed globally on the Triggers page. Types:
   - `sell_on_date` — fires on a date.
   - `sell_after_days` — fires X days after the linked purchase (or after the trigger was created).
   - `pct_change` — fires when price moves up/down X% from a baseline: average cost (default), the linked
     purchase price, or a fixed price (the UI prefills today's price).
   - Trailing stops (later) use daily closes and say so in the UI.
-- **Revision** — every create/update of a thesis, link, claim or trigger appends a full snapshot with an
-  optional "why I changed it" note. Nothing is overwritten.
+- **Revision** — every create/update of a thesis, link, claim or trigger, and every attach/detach of a claim
+  or trigger, appends a full snapshot with an optional "why I changed it" note. Nothing is overwritten.
 - **Notification** — a to-do item, never passively dismissed. Kinds: trigger fired, claim review due, balance
   update due. Actions: adjust (edit the trigger/claim), record sale, snooze until a date, dismiss with a
   required reason, mark reviewed/updated. A fired trigger does not re-alert for the same link until its

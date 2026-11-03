@@ -484,3 +484,9 @@ td.num {
     color: #111;
   }
 }
+.warn {
+  font-size: .85rem;
+  color: var(--accent);
+  font-weight: 600;
+  margin: 0;
+}

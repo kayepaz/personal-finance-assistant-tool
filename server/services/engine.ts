@@ -6,7 +6,7 @@ import { addDays, dateFromMs, today } from "../lib/dates.ts";
 import { averageCost, getTrade, openQty } from "./assets.ts";
 import { createNotification, hasOpenNotification } from "./notifications.ts";
 import { latestPrice, refreshPrices, type RefreshResult } from "./prices.ts";
-import type { AfterDaysParams, DateParams, PctParams } from "./theses.ts";
+import type { AfterDaysParams, DateParams, PctParams } from "./triggers.ts";
 
 interface Evaluation {
   fire: boolean;
@@ -88,8 +88,10 @@ function evaluate(
 export function evaluateTriggers(data: DB, cache: DB, todayStr: string): number {
   const tz = getSetting(data, "time_zone");
   const triggers = data.prepare(
-    `SELECT g.* FROM triggers g JOIN theses t ON t.id = g.thesis_id
-     WHERE g.status = 'active' AND t.status IN ('active','triggered')`,
+    `SELECT g.*, tt.thesis_id FROM thesis_triggers tt
+     JOIN triggers g ON g.id = tt.trigger_id
+     JOIN theses t ON t.id = tt.thesis_id
+     WHERE tt.detached_at IS NULL AND g.status = 'active' AND t.status IN ('active','triggered')`,
   ).all();
   let fired = 0;
   for (const trigger of triggers) {
@@ -150,8 +152,12 @@ export function evaluateTriggers(data: DB, cache: DB, todayStr: string): number 
 
 export function queueClaimReviews(data: DB, todayStr: string): number {
   const due = data.prepare(
-    `SELECT c.*, t.title AS thesis_title FROM claims c JOIN theses t ON t.id = c.thesis_id
-     WHERE c.status = 'active' AND t.status IN ('draft','active','triggered') AND c.next_review_on <= ?`,
+    `SELECT c.*, group_concat(t.title, '", "') AS thesis_titles, count(t.id) AS thesis_count
+     FROM claims c
+     JOIN thesis_claims tc ON tc.claim_id = c.id AND tc.detached_at IS NULL
+     JOIN theses t ON t.id = tc.thesis_id AND t.status IN ('draft','active','triggered')
+     WHERE c.status = 'active' AND c.next_review_on <= ?
+     GROUP BY c.id`,
   ).all(todayStr);
   let n = 0;
   for (const c of due) {
@@ -159,7 +165,9 @@ export function queueClaimReviews(data: DB, todayStr: string): number {
     createNotification(data, {
       kind: "claim_review_due",
       title: `Review claim: ${c.statement}`,
-      body: `Is this still true for "${c.thesis_title}"?`,
+      body: Number(c.thesis_count) > 1
+        ? `Is this still true? It supports ${c.thesis_count} theses: "${c.thesis_titles}".`
+        : `Is this still true for "${c.thesis_titles}"?`,
       refType: "claim",
       refId: c.id as string,
     });

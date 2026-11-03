@@ -53,4 +53,5 @@ deno task fmt
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - [CHANGELOG.md](CHANGELOG.md) — semantic versioning
 
-Governance: BDFL ([@kayepaz](https://github.com/kayepaz)). License: [GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0-only`).
+Governance: BDFL ([@kayepaz](https://github.com/kayepaz)). License:
+[GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0-only`).

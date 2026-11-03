@@ -59,10 +59,14 @@ function enrich(db: DB, n: Row): Row {
     }
   }
   if (n.kind === "claim_review_due") {
-    const c = db.prepare(
-      "SELECT c.*, t.title AS thesis_title FROM claims c JOIN theses t ON t.id = c.thesis_id WHERE c.id = ?",
-    ).get(n.ref_id as string);
-    if (c) return { ...n, claim: c };
+    const c = db.prepare("SELECT * FROM claims WHERE id = ?").get(n.ref_id as string);
+    if (c) {
+      const theses = db.prepare(
+        `SELECT t.id, t.title FROM thesis_claims tc JOIN theses t ON t.id = tc.thesis_id
+         WHERE tc.claim_id = ? AND tc.detached_at IS NULL ORDER BY t.title`,
+      ).all(n.ref_id as string);
+      return { ...n, claim: { ...c, theses } };
+    }
   }
   return n;
 }
@@ -127,19 +131,22 @@ function resolve(db: DB, id: string, resolution: Resolution, note: string) {
  */
 export function closeFirings(
   db: DB,
-  where: { triggerId?: string; linkId?: string; notificationId?: string },
+  where: { triggerId?: string; thesisId?: string; linkId?: string; notificationId?: string },
   resolution: Resolution,
   note: string,
 ): void {
-  const [col, val] = where.triggerId
-    ? ["trigger_id", where.triggerId]
-    : where.linkId
-    ? ["link_id", where.linkId]
-    : ["notification_id", where.notificationId!];
+  // Any combination of filters; at least one is required.
+  const conds: string[] = [];
+  const vals: string[] = [];
+  if (where.triggerId) conds.push("f.trigger_id = ?"), vals.push(where.triggerId);
+  if (where.thesisId) conds.push("l.thesis_id = ?"), vals.push(where.thesisId);
+  if (where.linkId) conds.push("f.link_id = ?"), vals.push(where.linkId);
+  if (where.notificationId) conds.push("f.notification_id = ?"), vals.push(where.notificationId);
+  if (!conds.length) throw new Error("closeFirings needs a filter");
   const firings = db.prepare(
     `SELECT f.id, f.notification_id, l.thesis_id FROM trigger_firings f JOIN thesis_links l ON l.id = f.link_id
-     WHERE f.${col} = ? AND f.closed_at IS NULL`,
-  ).all(val);
+     WHERE ${conds.join(" AND ")} AND f.closed_at IS NULL`,
+  ).all(...vals);
   const now = Date.now();
   const theses = new Set<string>();
   for (const f of firings) {

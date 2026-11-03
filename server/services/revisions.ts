@@ -1,8 +1,8 @@
 import type { DB, Row } from "../db/db.ts";
 import { uuidv7 } from "../lib/ids.ts";
 
-export type EntityType = "thesis" | "thesis_link" | "claim" | "trigger";
-export type RevisionAction = "create" | "update" | "retire" | "unlink";
+export type EntityType = "thesis" | "thesis_link" | "claim" | "trigger" | "thesis_claim" | "thesis_trigger";
+export type RevisionAction = "create" | "update" | "retire" | "unlink" | "attach" | "detach";
 
 /** Append a full snapshot of an entity. Call inside the same transaction as the change. */
 export function recordRevision(

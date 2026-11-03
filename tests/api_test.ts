@@ -1,6 +1,6 @@
 /** End-to-end tests through the HTTP handler with in-memory databases and a fake market-data API. */
 import assert from "node:assert/strict";
-import { openInMemory } from "../server/db/db.ts";
+import { migrate, openDatabase, openInMemory } from "../server/db/db.ts";
 import { createApp } from "../server/app.ts";
 import { evaluateTriggers, queueClaimReviews } from "../server/services/engine.ts";
 import { storePrice } from "../server/services/prices.ts";
@@ -160,12 +160,17 @@ Deno.test("triggers fire once, notifications need action, adjusting re-arms", as
   });
   const t = await ok("POST", "/api/theses", { title: "AI capex", status: "active" });
   await ok("POST", `/api/theses/${t.id}/links`, { asset_id: asset.id, buy_trade_id: buy.id });
-  const stop = await ok("POST", `/api/theses/${t.id}/triggers`, {
+  const stop = await ok("POST", "/api/triggers", {
+    thesis_id: t.id,
     type: "pct_change",
     params: { direction: "down", percent: "10" },
     note: "10% stop",
   });
-  await ok("POST", `/api/theses/${t.id}/triggers`, { type: "sell_on_date", params: { date: "2027-01-05" } });
+  await ok("POST", "/api/triggers", {
+    thesis_id: t.id,
+    type: "sell_on_date",
+    params: { date: "2027-01-05" },
+  });
 
   storePrice(dbs.cache, "NVDA", { date: "2026-11-02", close: "95" }, "USD", "test");
   assert.equal(evaluateTriggers(dbs.data, dbs.cache, "2026-11-03"), 0);
@@ -212,7 +217,8 @@ Deno.test("triggers fire once, notifications need action, adjusting re-arms", as
 Deno.test("claims come due for review; closing a thesis needs a retrospective", async () => {
   const { dbs, ok, call } = await setup();
   const t = await ok("POST", "/api/theses", { title: "Strong product", status: "active" });
-  const claim = await ok("POST", `/api/theses/${t.id}/claims`, {
+  const claim = await ok("POST", "/api/claims", {
+    thesis_id: t.id,
     statement: "Margins keep expanding",
     review_every_days: 30,
   });
@@ -269,4 +275,102 @@ Deno.test("client is served with types stripped", async () => {
   assert.equal((await app(new Request("http://pfat.test/%2e%2e/deno.json"))).status, 404);
   assert.equal((await app(new Request("http://pfat.test/deno.json"))).status, 404);
   assert.equal((await app(new Request("http://pfat.test/theses/123"))).status, 200); // SPA fallback
+});
+
+Deno.test("claims and triggers are shared across theses", async () => {
+  const { dbs, ok, call } = await setup();
+  const acct = await ok("POST", "/api/accounts", { name: "Margin", kind: "self_directed", currency: "USD" });
+  const inst = await ok("POST", "/api/instruments", { symbol: "AMD", kind: "equity", currency: "USD" });
+  const asset = await ok("POST", "/api/assets", { account_id: acct.id, instrument_id: inst.id });
+  const b1 = await ok("POST", `/api/assets/${asset.id}/buys`, {
+    trade_date: "2026-02-01",
+    quantity: "10",
+    price: "100",
+  });
+  const b2 = await ok("POST", `/api/assets/${asset.id}/buys`, {
+    trade_date: "2026-03-01",
+    quantity: "10",
+    price: "100",
+  });
+  const t1 = await ok("POST", "/api/theses", { title: "Growth", status: "active" });
+  const t2 = await ok("POST", "/api/theses", { title: "AI wave", status: "active" });
+  await ok("POST", `/api/theses/${t1.id}/links`, { asset_id: asset.id, buy_trade_id: b1.id });
+  await ok("POST", `/api/theses/${t2.id}/links`, { asset_id: asset.id, buy_trade_id: b2.id });
+
+  // One library trigger, attached to both theses.
+  const stop = await ok("POST", "/api/triggers", {
+    label: "Standard stop",
+    type: "pct_change",
+    params: { direction: "down", percent: "10" },
+  });
+  await ok("POST", `/api/theses/${t1.id}/triggers`, { trigger_id: stop.id });
+  await ok("POST", `/api/theses/${t2.id}/triggers`, { trigger_id: stop.id });
+  assert.equal((await ok("GET", `/api/triggers/${stop.id}`)).theses.length, 2);
+
+  storePrice(dbs.cache, "AMD", { date: "2026-11-03", close: "85" }, "USD", "test");
+  assert.equal(evaluateTriggers(dbs.data, dbs.cache, "2026-11-03"), 2, "fires once per thesis holding");
+
+  // Removing it from one thesis resolves only that thesis's alert.
+  const t2view = await ok("GET", `/api/theses/${t2.id}`);
+  assert.equal(
+    (await call("POST", `/api/thesis-triggers/${t2view.triggers[0].attachment_id}/detach`, {})).status,
+    400,
+  );
+  await ok("POST", `/api/thesis-triggers/${t2view.triggers[0].attachment_id}/detach`, {
+    reason: "Different exit plan",
+  });
+  assert.equal(((await ok("GET", "/api/notifications")) as unknown as J[]).length, 1);
+  assert.equal((await ok("GET", `/api/theses/${t2.id}`)).status, "active");
+  assert.equal((await ok("GET", `/api/theses/${t1.id}`)).status, "triggered");
+
+  // Editing it applies everywhere it is still used and shows up in each thesis's history.
+  await ok("PATCH", `/api/triggers/${stop.id}`, {
+    params: { direction: "down", percent: "20" },
+    note: "Wider",
+  });
+  assert.equal((await ok("GET", `/api/theses/${t1.id}`)).triggers[0].params.percent, "20");
+  const hist = (await ok("GET", `/api/theses/${t1.id}/history`)) as unknown as J[];
+  assert.ok(hist.some((h) => h.entity_type === "trigger" && h.note === "Wider"));
+
+  // A shared claim gets one review notification and one review for both theses.
+  const claim = await ok("POST", "/api/claims", {
+    statement: "AI spend keeps growing",
+    review_every_days: 7,
+    thesis_id: t1.id,
+  });
+  await ok("POST", `/api/theses/${t2.id}/claims`, { claim_id: claim.id });
+  assert.equal(queueClaimReviews(dbs.data, claim.next_review_on), 1);
+  const review = ((await ok("GET", "/api/notifications")) as unknown as J[]).find((n) =>
+    n.kind === "claim_review_due"
+  )!;
+  assert.equal(review.claim.theses.length, 2);
+  await ok("POST", `/api/claims/${claim.id}/reviews`, { verdict: "still_true" });
+  assert.ok(
+    !((await ok("GET", "/api/notifications")) as unknown as J[]).some((n) => n.kind === "claim_review_due"),
+  );
+  assert.equal(((await ok("GET", "/api/claims")) as unknown as J[])[0].thesis_count, 2);
+});
+
+Deno.test("migration 0002 moves existing claims and triggers onto their theses", () => {
+  // Build a v1 database, add data, then apply 0002.
+  const db = openDatabase(":memory:");
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec(Deno.readTextFileSync(new URL("../server/db/migrations/data/0001_init.sql", import.meta.url)));
+  db.exec("PRAGMA user_version = 1; PRAGMA foreign_keys = ON;");
+  db.exec(`
+    INSERT INTO theses VALUES ('01a00000-0000-7000-8000-000000000001','T','', 'active','',NULL,NULL,1,1);
+    INSERT INTO claims VALUES ('01a00000-0000-7000-8000-000000000002','01a00000-0000-7000-8000-000000000001','C',30,'2026-12-01','active',1,1);
+    INSERT INTO claim_reviews VALUES ('01a00000-0000-7000-8000-000000000003','01a00000-0000-7000-8000-000000000002','still_true','',2);
+    INSERT INTO triggers VALUES ('01a00000-0000-7000-8000-000000000004','01a00000-0000-7000-8000-000000000001','sell_on_date','{"date":"2027-01-01"}','','active',1,1);
+  `);
+  migrate(db, "data");
+  const one = (sql: string) => db.prepare(sql).get() as Record<string, unknown>;
+  assert.equal(one("PRAGMA user_version").user_version, 2);
+  assert.equal(one("SELECT count(*) AS n FROM claim_reviews").n, 1, "reviews survive the claims rebuild");
+  assert.equal(one("SELECT thesis_id FROM thesis_claims").thesis_id, "01a00000-0000-7000-8000-000000000001");
+  assert.equal(
+    one("SELECT thesis_id FROM thesis_triggers").thesis_id,
+    "01a00000-0000-7000-8000-000000000001",
+  );
+  assert.equal(one("PRAGMA foreign_keys").foreign_keys, 1);
 });
