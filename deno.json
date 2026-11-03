@@ -12,10 +12,10 @@
   },
   "fmt": {
     "lineWidth": 110,
-    "exclude": ["data/"]
+    "exclude": ["./data/"]
   },
   "lint": {
-    "exclude": ["data/"]
+    "exclude": ["./data/"]
   },
-  "exclude": ["data/"]
+  "exclude": ["./data/"]
 }
