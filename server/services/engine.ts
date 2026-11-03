@@ -6,6 +6,8 @@ import { addDays, dateFromMs, today } from "../lib/dates.ts";
 import { averageCost, getTrade, openQty } from "./assets.ts";
 import { createNotification, hasOpenNotification } from "./notifications.ts";
 import { latestPrice, refreshPrices, type RefreshResult } from "./prices.ts";
+import { currenciesInUse, type FxResult, refreshFx } from "./fx.ts";
+import { balanceSheet, recordNetWorth } from "./valuation.ts";
 import type { AfterDaysParams, DateParams, PctParams } from "./triggers.ts";
 
 interface Evaluation {
@@ -218,6 +220,8 @@ export function instrumentsToPrice(data: DB): { provider_symbol: string; currenc
 export interface JobReport {
   ran_at: number;
   prices: RefreshResult;
+  fx: FxResult;
+  net_worth: string;
   triggers_fired: number;
   claim_reviews: number;
   balance_reminders: number;
@@ -228,9 +232,15 @@ export async function runJobs(dbs: Databases, fetchFn: typeof fetch = fetch): Pr
   const todayStr = today(tz);
   const utcDay = new Date().toISOString().slice(0, 10);
   const prices = await refreshPrices(dbs.data, dbs.cache, instrumentsToPrice(dbs.data), utcDay, fetchFn);
+  const base = getSetting(dbs.data, "base_currency") ?? "CAD";
+  const fx = await refreshFx(dbs.data, dbs.cache, currenciesInUse(dbs.data), base, utcDay, fetchFn);
+  const sheet = balanceSheet(dbs.data, dbs.cache, todayStr);
+  recordNetWorth(dbs.data, sheet);
   return {
     ran_at: Date.now(),
     prices,
+    fx,
+    net_worth: sheet.totals.net_worth,
     triggers_fired: evaluateTriggers(dbs.data, dbs.cache, todayStr),
     claim_reviews: queueClaimReviews(dbs.data, todayStr),
     balance_reminders: queueBalanceUpdates(dbs.data, todayStr),

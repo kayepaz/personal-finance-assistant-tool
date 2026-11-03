@@ -64,9 +64,23 @@ calculated.
   price + the latest manually entered cash. Months without an update carry the last value forward, flagged
   stale.
 
-## Base currency
+## Base currency and exchange rates
 
-Chosen at install. Other currencies convert with cached FX rates.
+Chosen at install. Other currencies convert with cached daily rates from the Bank of Canada (keyless; turned
+on with its own consent checkbox in Settings → Market data). Pairs are derived through CAD. Alpha Vantage is
+the fallback for currencies the Bank doesn't publish.
+
+## Reports (v0.2)
+
+- **Balance sheet** — every account's latest value in the base currency, assets minus liabilities, stale and
+  unconvertible values flagged. Self-directed accounts = positions × latest price + latest cash; others =
+  latest recorded balance. Liability balances are entered as positive amounts owed.
+- **Net worth** — a row per month in `net_worth_snapshots`, refreshed on every background run (so a past month
+  keeps its last value); the current month is shown live. Line chart plus monthly change bars, with a table.
+- **Share of assets by account** and **by thesis** (donuts, max 7 named slices + "Other"). A purchase in
+  several open theses is split evenly between them and listed in an addendum; value-tracked assets take their
+  account's value divided evenly among the account's value-tracked assets. Unlinked value shows as "Not in any
+  thesis".
 
 ## Notification delivery (v0.1)
 

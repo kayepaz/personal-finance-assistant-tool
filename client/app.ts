@@ -38,6 +38,7 @@ const TABS: [string, string][] = [
   ["/claims", "Claims"],
   ["/triggers", "Triggers"],
   ["/accounts", "Accounts"],
+  ["/reports", "Reports"],
   ["/settings", "Settings"],
 ];
 
@@ -89,6 +90,7 @@ async function render(): Promise<void> {
     else if (path === "/triggers") view = await views.triggersView(nav);
     else if (path === "/triggers/new") view = await views.triggerNewView(nav, thesisParam);
     else if ((m = path.match(/^\/triggers\/([\w-]+)$/))) view = await views.triggerView(nav, m[1]);
+    else if (path === "/reports") view = await views.reportsView(nav);
     else if (path === "/accounts") view = await views.accountsView(nav);
     else if ((m = path.match(/^\/accounts\/([\w-]+)$/))) view = await views.accountView(nav, m[1]);
     else if ((m = path.match(/^\/assets\/([\w-]+)$/))) view = await views.assetView(nav, m[1]);

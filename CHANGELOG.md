@@ -6,6 +6,12 @@ All notable changes are documented here. The project follows [Semantic Versionin
 
 ### Added
 
+- Reports page: balance sheet in the base currency, net worth by month with monthly change, and share of
+  assets by account and by thesis (even splits listed in an addendum). Monthly net-worth history (migration
+  `0003`).
+- Exchange rates from the Bank of Canada (keyless, with its own consent checkbox), Alpha Vantage fallback.
+- GitHub Actions CI: format, lint, type-check, tests and a start-up smoke test.
+
 - Claims and triggers are a shared library: attach one to many theses, pick existing ones or "Add new" from a
   thesis, and manage them on the new Claims and Triggers pages (migration `0002`).
 

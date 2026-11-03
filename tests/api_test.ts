@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { migrate, openDatabase, openInMemory } from "../server/db/db.ts";
 import { createApp } from "../server/app.ts";
 import { evaluateTriggers, queueClaimReviews } from "../server/services/engine.ts";
-import { storePrice } from "../server/services/prices.ts";
+import { setConsent, setProviderKey, storePrice } from "../server/services/prices.ts";
+import { fxRate, refreshFx, storeRate } from "../server/services/fx.ts";
 import { resetLoginBrake } from "../server/services/auth.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -365,7 +366,7 @@ Deno.test("migration 0002 moves existing claims and triggers onto their theses",
   `);
   migrate(db, "data");
   const one = (sql: string) => db.prepare(sql).get() as Record<string, unknown>;
-  assert.equal(one("PRAGMA user_version").user_version, 2);
+  assert.ok(Number(one("PRAGMA user_version").user_version) >= 2);
   assert.equal(one("SELECT count(*) AS n FROM claim_reviews").n, 1, "reviews survive the claims rebuild");
   assert.equal(one("SELECT thesis_id FROM thesis_claims").thesis_id, "01a00000-0000-7000-8000-000000000001");
   assert.equal(
@@ -373,4 +374,99 @@ Deno.test("migration 0002 moves existing claims and triggers onto their theses",
     "01a00000-0000-7000-8000-000000000001",
   );
   assert.equal(one("PRAGMA foreign_keys").foreign_keys, 1);
+});
+
+Deno.test("reports: balance sheet in base currency, net worth history, allocation with even splits", async () => {
+  const { dbs, ok } = await setup();
+  storeRate(dbs.cache, "USD", "CAD", "2026-11-02", "1.4", "test");
+  const tfsa = await ok("POST", "/api/accounts", { name: "TFSA", kind: "self_directed", currency: "CAD" });
+  const inst = await ok("POST", "/api/instruments", { symbol: "NVDA", kind: "equity", currency: "USD" });
+  const asset = await ok("POST", "/api/assets", { account_id: tfsa.id, instrument_id: inst.id });
+  const buy = await ok("POST", `/api/assets/${asset.id}/buys`, {
+    trade_date: "2026-01-05",
+    quantity: "10",
+    price: "100",
+  });
+  storePrice(dbs.cache, "NVDA", { date: new Date().toISOString().slice(0, 10), close: "120" }, "USD", "test");
+  await ok("POST", `/api/accounts/${tfsa.id}/snapshots`, { kind: "cash", amount: "500" });
+
+  const house = await ok("POST", "/api/accounts", { name: "House", kind: "real_estate" });
+  await ok("POST", `/api/accounts/${house.id}/snapshots`, { amount: "800000" });
+  const mortgage = await ok("POST", "/api/accounts", {
+    name: "Mortgage",
+    kind: "line_of_credit",
+    linked_account_id: house.id,
+  });
+  await ok("POST", `/api/accounts/${mortgage.id}/snapshots`, { amount: "300000" });
+  await ok("POST", "/api/accounts", { name: "Empty card", kind: "credit_card" }); // no balance yet
+
+  const a = await ok("POST", "/api/theses", { title: "AI", status: "active" });
+  const b = await ok("POST", "/api/theses", { title: "Growth", status: "active" });
+  for (const t of [a, b]) {
+    await ok("POST", `/api/theses/${t.id}/links`, { asset_id: asset.id, buy_trade_id: buy.id });
+  }
+
+  const r = await ok("GET", "/api/reports");
+  const bs = r.balance_sheet;
+  assert.equal(bs.base_currency, "CAD");
+  assert.equal(bs.accounts.find((x: J) => x.name === "TFSA").value_base, "2180");
+  assert.deepEqual(bs.totals, { assets: "802180", liabilities: "300000", net_worth: "502180" });
+  assert.ok(bs.warnings.some((w: string) => w.includes("Empty card")));
+
+  assert.equal(r.net_worth.length, 1);
+  assert.equal(r.net_worth[0].live, true);
+
+  assert.equal(r.by_account.slices[0].label, "House");
+  const ai = r.by_thesis.slices.find((s: J) => s.label === "AI");
+  assert.equal(ai.value, "840");
+  assert.equal(r.by_thesis.slices.find((s: J) => s.label === "Not in any thesis").value, "800500");
+  assert.equal(r.by_thesis.splits.length, 1);
+  assert.deepEqual(r.by_thesis.splits[0].theses.sort(), ["AI", "Growth"]);
+  assert.equal(r.by_thesis.splits[0].each, "840");
+
+  // A job run stores this month; the report then shows it (live) without duplicating.
+  await ok("POST", "/api/jobs/run");
+  assert.equal((await ok("GET", "/api/reports")).net_worth.length, 1);
+});
+
+Deno.test("fx: Bank of Canada needs consent, derives cross rates, falls back to Alpha Vantage", async () => {
+  const dbs = openInMemory();
+  const calls: string[] = [];
+  const fakeFetch = ((input: string | URL) => {
+    const url = new URL(String(input));
+    calls.push(url.hostname + url.pathname);
+    if (url.hostname === "www.bankofcanada.ca") {
+      return Promise.resolve(Response.json({
+        observations: [
+          { d: "2026-10-30", FXUSDCAD: { v: "1.39" }, FXEURCAD: { v: "1.50" } },
+          { d: "2026-11-02", FXUSDCAD: { v: "1.40" }, FXEURCAD: { v: "1.52" } },
+        ],
+      }));
+    }
+    return Promise.resolve(Response.json({
+      "Realtime Currency Exchange Rate": {
+        "5. Exchange Rate": "0.0101",
+        "6. Last Refreshed": "2026-11-02 10:00:00",
+      },
+    }));
+  }) as typeof fetch;
+
+  let r = await refreshFx(dbs.data, dbs.cache, ["USD", "EUR"], "CAD", "2026-11-03", fakeFetch);
+  assert.equal(calls.length, 0, "no request without consent");
+  assert.equal(r.missing.length, 2);
+
+  setConsent(dbs.data, "market_data:bankofcanada", "test", true);
+  r = await refreshFx(dbs.data, dbs.cache, ["USD", "EUR", "ISK"], "CAD", "2026-11-03", fakeFetch);
+  assert.deepEqual(calls, ["www.bankofcanada.ca/valet/observations/FXUSDCAD,FXEURCAD/json"]);
+  assert.equal(fxRate(dbs.cache, "USD", "CAD")!.rate, "1.40");
+  assert.equal(fxRate(dbs.cache, "CAD", "USD")!.rate, "0.7142857143");
+  assert.equal(fxRate(dbs.cache, "EUR", "USD")!.rate, "1.0857142857"); // cross through CAD
+  assert.equal(r.missing[0].currency, "ISK");
+
+  setProviderKey(dbs.data, "alphavantage", "AV");
+  setConsent(dbs.data, "market_data:alphavantage", "test", true);
+  r = await refreshFx(dbs.data, dbs.cache, ["USD", "EUR", "ISK"], "CAD", "2026-11-03", fakeFetch);
+  assert.equal(calls.length, 2, "Bank of Canada not asked again the same day");
+  assert.equal(fxRate(dbs.cache, "ISK", "CAD")!.rate, "0.0101");
+  assert.equal(r.missing.length, 0);
 });

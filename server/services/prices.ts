@@ -80,25 +80,46 @@ export const PROVIDERS: PriceProvider[] = [alphaVantage, finnhub];
 
 // ---------- settings & consent ----------
 
+/** Bank of Canada Valet: free, keyless daily exchange rates against CAD. */
+export const BANK_OF_CANADA = {
+  id: "bankofcanada",
+  name: "Bank of Canada",
+  dailyLimit: 200,
+  consentText:
+    "PFAT will ask www.bankofcanada.ca for daily exchange rates (for example USD to CAD) for the currencies your accounts and holdings use. Only currency codes are sent; no key, holdings or balances.",
+};
+
+/** Every outbound market-data source, for the Settings page. */
 export function providerStatus(data: DB, cache: DB, day: string): Row[] {
-  return PROVIDERS.map((p) => {
-    const usage = cache.prepare("SELECT calls, exhausted FROM api_usage WHERE provider = ? AND day = ?").get(
-      p.id,
-      day,
-    ) as
-      | Row
-      | undefined;
+  const list = [
+    ...PROVIDERS.map((p) => ({
+      ...p,
+      needs_key: true,
+      uses: p.id === "alphavantage" ? "Prices; exchange rates the Bank of Canada doesn't publish" : "Prices",
+    })),
+    { ...BANK_OF_CANADA, needs_key: false, uses: "Exchange rates" },
+  ];
+  return list.map((p) => {
+    const u = usage(cache, p.id, day);
     return {
       id: p.id,
       name: p.name,
+      uses: p.uses,
+      needs_key: p.needs_key,
       consent_text: p.consentText,
-      has_key: !!getSetting(data, `api_key:${p.id}`),
+      has_key: p.needs_key ? !!getSetting(data, `api_key:${p.id}`) : true,
       consented: hasConsent(data, `market_data:${p.id}`),
       daily_limit: p.dailyLimit,
-      calls_today: Number(usage?.calls ?? 0),
-      exhausted_today: usage?.exhausted === 1,
+      calls_today: u.calls,
+      exhausted_today: u.exhausted,
     };
   });
+}
+
+export function findProvider(id: string): { id: string; consentText: string; needsKey: boolean } | undefined {
+  if (id === BANK_OF_CANADA.id) return { ...BANK_OF_CANADA, needsKey: false };
+  const p = PROVIDERS.find((x) => x.id === id);
+  return p ? { ...p, needsKey: true } : undefined;
 }
 
 export function setProviderKey(data: DB, providerId: string, key: string | null): void {
@@ -141,7 +162,7 @@ export function storePrice(cache: DB, symbol: string, close: DailyClose, currenc
   ).run(symbol, close.date, close.close, currency, provider, Date.now());
 }
 
-function usage(cache: DB, provider: string, day: string): { calls: number; exhausted: boolean } {
+export function usage(cache: DB, provider: string, day: string): { calls: number; exhausted: boolean } {
   const r = cache.prepare("SELECT calls, exhausted FROM api_usage WHERE provider = ? AND day = ?").get(
     provider,
     day,
@@ -151,7 +172,7 @@ function usage(cache: DB, provider: string, day: string): { calls: number; exhau
   return { calls: Number(r?.calls ?? 0), exhausted: r?.exhausted === 1 };
 }
 
-function countCall(cache: DB, provider: string, day: string, exhausted = false) {
+export function countCall(cache: DB, provider: string, day: string, exhausted = false) {
   cache.prepare(
     `INSERT INTO api_usage(provider, day, calls, exhausted) VALUES (?, ?, 1, ?)
      ON CONFLICT(provider, day) DO UPDATE SET calls = calls + 1, exhausted = max(exhausted, excluded.exhausted)`,

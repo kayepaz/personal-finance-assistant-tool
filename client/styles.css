@@ -490,3 +490,218 @@ td.num {
   font-weight: 600;
   margin: 0;
 }
+
+/* ---------- charts (validated categorical palette; light & dark) ---------- */
+:root {
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --series-8: #e34948;
+  --neutral-fill: #c9c6bd;
+  --gain: #2a78d6;
+  --loss: #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+    --neutral-fill: #4a504c;
+    --gain: #3987e5;
+    --loss: #e66767;
+  }
+}
+.s1 {
+  fill: var(--series-1);
+}
+.s2 {
+  fill: var(--series-2);
+}
+.s3 {
+  fill: var(--series-3);
+}
+.s4 {
+  fill: var(--series-4);
+}
+.s5 {
+  fill: var(--series-5);
+}
+.s6 {
+  fill: var(--series-6);
+}
+.s7 {
+  fill: var(--series-7);
+}
+.s8 {
+  fill: var(--series-8);
+}
+.s-neutral {
+  fill: var(--neutral-fill);
+}
+.swatch.s1 {
+  background: var(--series-1);
+}
+.swatch.s2 {
+  background: var(--series-2);
+}
+.swatch.s3 {
+  background: var(--series-3);
+}
+.swatch.s4 {
+  background: var(--series-4);
+}
+.swatch.s5 {
+  background: var(--series-5);
+}
+.swatch.s6 {
+  background: var(--series-6);
+}
+.swatch.s7 {
+  background: var(--series-7);
+}
+.swatch.s8 {
+  background: var(--series-8);
+}
+.swatch.s-neutral {
+  background: var(--neutral-fill);
+}
+.swatch {
+  display: inline-block;
+  width: .8rem;
+  height: .8rem;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+
+.chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin: .5rem 0;
+}
+.chart .grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.chart .axis {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+.chart .tick {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.chart .line {
+  fill: none;
+  stroke: var(--series-1);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.chart .marker {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+.chart .bar.gain {
+  fill: var(--gain);
+}
+.chart .bar.loss {
+  fill: var(--loss);
+}
+.chart .hit-area {
+  fill: transparent;
+}
+.chart .hit:hover .hit-area {
+  fill: var(--bg);
+}
+.chart .hit:hover .marker {
+  r: 6;
+}
+
+.donut-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+}
+.donut {
+  width: 200px;
+  height: 200px;
+  flex: none;
+}
+.donut .seg {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+.donut .seg:hover {
+  opacity: .85;
+}
+.donut-value {
+  fill: var(--ink);
+  font-size: 20px;
+  font-weight: 650;
+}
+.donut-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.legend {
+  flex: 1 1 14rem;
+  margin: 0;
+  font-size: .88rem;
+}
+.legend td {
+  border-bottom: 1px solid var(--line);
+  padding: .3rem .4rem;
+}
+
+table.sheet .section th {
+  padding-top: 1rem;
+  color: var(--ink);
+  font-size: .85rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+table.sheet .subtotal td {
+  font-weight: 600;
+  border-bottom: 2px solid var(--line);
+}
+table.sheet tfoot td {
+  font-weight: 700;
+  font-size: 1.05rem;
+  border-bottom: 0;
+  padding-top: .8rem;
+}
+table.sheet tr.stale td {
+  color: var(--muted);
+}
+.flag {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: .8rem;
+  cursor: help;
+}
+.warnings {
+  color: var(--accent);
+  font-size: .88rem;
+  margin: .8rem 0 0;
+  padding-left: 1.2rem;
+}
+.addendum {
+  margin-top: 1rem;
+  border-top: 1px solid var(--line);
+  padding-top: .8rem;
+  font-size: .9rem;
+}
+.addendum ul {
+  padding-left: 1.2rem;
+  margin: .4rem 0 0;
+}

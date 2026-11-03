@@ -1,6 +1,7 @@
 /** Page views. Each view returns an element; `go()` navigates and re-renders. */
 import { del, get, type J, patch, post, setToken } from "./api.ts";
-import { field, fmtDate, fmtNum, formData, h, input, label, select, textarea } from "./dom.ts";
+import { changeBars, donut, type DonutSlice, foldSlices, lineChart } from "./charts.ts";
+import { field, fmtDate, fmtMoney, fmtNum, formData, h, input, label, select, textarea } from "./dom.ts";
 
 export interface Nav {
   go: (path: string) => void;
@@ -1239,20 +1240,29 @@ export async function settingsView(nav: Nav, onSignOut: () => void): Promise<HTM
       h(
         "p",
         { class: "hint" },
-        "Prices are fetched only from providers you've given a key and consent to. Only ticker symbols are sent.",
+        "Prices and exchange rates come only from sources you've turned on below. Only ticker symbols and currency codes are sent.",
       ),
       s.providers.map((p: J) =>
         h(
           "div",
           { class: "provider" },
-          h("h3", null, p.name, " ", p.consented && p.has_key ? badge("active") : badge("draft")),
+          h(
+            "h3",
+            null,
+            p.name,
+            " ",
+            p.consented && p.has_key
+              ? h("span", { class: "badge badge-active" }, "On")
+              : h("span", { class: "badge" }, "Off"),
+          ),
+          h("p", { class: "meta" }, `Used for: ${p.uses}${p.needs_key ? "" : " · no API key needed"}`),
           h("p", { class: "consent" }, p.consent_text),
           h(
             "p",
             { class: "meta" },
             `${p.calls_today} of ${p.daily_limit} calls today${p.exhausted_today ? " · limit reached" : ""}`,
           ),
-          h(
+          !p.needs_key ? null : h(
             "form",
             {
               class: "row-form",
@@ -1740,4 +1750,264 @@ export async function triggerView(nav: Nav, id: string): Promise<HTMLElement> {
       : null,
     historyList(g.history),
   );
+}
+
+// ---------------------------------------------------------------- reports
+
+const KIND_LABEL = new Map(ACCOUNT_KINDS);
+
+export async function reportsView(nav: Nav): Promise<HTMLElement> {
+  const r = await get("/reports");
+  const bs = r.balance_sheet;
+  const cur = bs.base_currency as string;
+  const money = (v: string | null | undefined) => fmtMoney(v);
+  const fmt = (n: number) => fmtMoney(n.toFixed(2));
+
+  // --- balance sheet
+  const row = (a: J) =>
+    h(
+      "tr",
+      { class: a.stale || a.value_base === null ? "stale" : "" },
+      h(
+        "td",
+        null,
+        link(nav, `/accounts/${a.id}`, a.name),
+        a.tags.length ? h("span", { class: "meta" }, a.tags.join(", ")) : null,
+      ),
+      h("td", null, KIND_LABEL.get(a.kind) ?? a.kind),
+      h(
+        "td",
+        { class: "num" },
+        a.currency !== cur && a.value_native !== null ? `${money(a.value_native)} ${a.currency}` : "",
+      ),
+      h("td", { class: "num" }, money(a.value_base)),
+      h(
+        "td",
+        null,
+        a.as_of ?? "",
+        a.warnings.length
+          ? h("span", { class: "flag", title: a.warnings.join("\n") }, a.stale ? " stale" : " check")
+          : null,
+      ),
+    );
+  const section = (title: string, rows: J[], total: string) =>
+    h(
+      "tbody",
+      null,
+      h("tr", { class: "section" }, h("th", { colspan: 5 }, title)),
+      rows.length ? rows.map(row) : h("tr", null, h("td", { colspan: 5, class: "empty" }, "None")),
+      h(
+        "tr",
+        { class: "subtotal" },
+        h("td", { colspan: 3 }, `Total ${title.toLowerCase()}`),
+        h("td", { class: "num" }, money(total)),
+        h("td"),
+      ),
+    );
+  const assets = bs.accounts.filter((a: J) => !a.is_liability);
+  const liabilities = bs.accounts.filter((a: J) => a.is_liability);
+  const sheet = h(
+    "div",
+    { class: "panel" },
+    h("h2", null, "Balance sheet"),
+    h(
+      "table",
+      { class: "sheet" },
+      h(
+        "thead",
+        null,
+        h("tr", null, ["Account", "Type", "Native", `Value (${cur})`, "As of"].map((c) => h("th", null, c))),
+      ),
+      section("Assets", assets, bs.totals.assets),
+      section("Liabilities", liabilities, bs.totals.liabilities),
+      h(
+        "tfoot",
+        null,
+        h(
+          "tr",
+          null,
+          h("td", { colspan: 3 }, "Net worth"),
+          h("td", { class: "num" }, money(bs.totals.net_worth)),
+          h("td"),
+        ),
+      ),
+    ),
+    bs.warnings.length
+      ? h("ul", { class: "warnings" }, bs.warnings.map((w: string) => h("li", null, w)))
+      : null,
+    h(
+      "p",
+      { class: "hint" },
+      "Self-directed accounts are valued at the latest price plus cash. Other accounts use their latest recorded balance. Approximate by design.",
+    ),
+  );
+
+  // --- net worth over time
+  const monthLabel = (m: string) =>
+    new Date(`${m}-01T00:00:00`).toLocaleDateString(undefined, { month: "short", year: "numeric" });
+  const months = r.net_worth as J[];
+  const latest = months[months.length - 1];
+  const trend = h(
+    "div",
+    { class: "panel" },
+    h("h2", null, "Net worth"),
+    h("p", { class: "big" }, money(latest.net_worth), " ", cur),
+    latest.change !== null
+      ? h(
+        "p",
+        { class: "meta" },
+        `${Number(latest.change) >= 0 ? "+" : "−"}${
+          money(latest.change.replace("-", ""))
+        } ${cur} since last month`,
+      )
+      : null,
+    months.length > 1
+      ? [
+        lineChart(
+          months.map((m) => ({
+            label: monthLabel(m.month),
+            value: Number(m.net_worth),
+            display: `${money(m.net_worth)} ${cur}`,
+          })),
+          "Net worth by month",
+        ),
+        h("h3", null, "Monthly change"),
+        changeBars(
+          months.slice(1).map((m) => ({
+            label: monthLabel(m.month),
+            value: Number(m.change),
+            display: `${Number(m.change) >= 0 ? "+" : "−"}${money(m.change.replace("-", ""))} ${cur}`,
+          })),
+          "Monthly change in net worth",
+        ),
+        details(
+          "Table",
+          h(
+            "table",
+            null,
+            h(
+              "thead",
+              null,
+              h(
+                "tr",
+                null,
+                ["Month", "Assets", "Liabilities", "Net worth", "Change"].map((c) => h("th", null, c)),
+              ),
+            ),
+            h(
+              "tbody",
+              null,
+              [...months].reverse().map((m) =>
+                h(
+                  "tr",
+                  null,
+                  h("td", null, monthLabel(m.month), m.live ? " (so far)" : ""),
+                  h("td", { class: "num" }, money(m.assets)),
+                  h("td", { class: "num" }, money(m.liabilities)),
+                  h("td", { class: "num" }, money(m.net_worth)),
+                  h("td", { class: "num" }, m.change === null ? "" : money(m.change)),
+                )
+              ),
+            ),
+          ),
+        ),
+      ]
+      : h(
+        "p",
+        { class: "hint" },
+        "The trend builds up month by month: PFAT records your net worth each time it runs its checks.",
+      ),
+  );
+
+  // --- allocation
+  const slices = (list: J[], neutralId: (x: J) => boolean) =>
+    list.map((x): DonutSlice => ({
+      label: x.label,
+      value: Number(x.value),
+      display: money(x.value),
+      pct: x.pct,
+      neutral: neutralId(x),
+    }));
+  const totalAssets = Number(r.by_account.total);
+  const byAccount = h(
+    "div",
+    { class: "panel" },
+    h("h2", null, "Share of assets by account"),
+    h("p", { class: "hint" }, `Values in ${cur}.`),
+    r.by_account.slices.length
+      ? donut(
+        foldSlices(slices(r.by_account.slices, () => false), fmt, totalAssets),
+        "total assets",
+        compactMoney(totalAssets),
+      )
+      : empty("No account values yet."),
+    liabilities.length
+      ? h(
+        "p",
+        { class: "hint" },
+        `Liabilities (${
+          money(bs.totals.liabilities)
+        } ${cur}) are subtracted from net worth and not shown in this chart.`,
+      )
+      : null,
+  );
+  const splits = r.by_thesis.splits as J[];
+  const byThesis = h(
+    "div",
+    { class: "panel" },
+    h("h2", null, "Share of assets by thesis"),
+    h("p", { class: "hint" }, `Values in ${cur}.`),
+    r.by_thesis.slices.length
+      ? donut(
+        foldSlices(slices(r.by_thesis.slices, (x) => x.id === null), fmt, totalAssets),
+        "total assets",
+        compactMoney(totalAssets),
+      )
+      : empty("No holdings are linked to a thesis yet."),
+    splits.length
+      ? h(
+        "div",
+        { class: "addendum" },
+        h("h3", null, "Addendum: split holdings"),
+        h(
+          "p",
+          { class: "hint" },
+          "These holdings belong to more than one thesis, so their value was split evenly between them.",
+        ),
+        h(
+          "ul",
+          null,
+          splits.map((x) =>
+            h(
+              "li",
+              null,
+              h("strong", null, x.holding),
+              ` (${x.account}, ${x.detail}): ${money(x.value)} ${cur} split ${x.theses.length} ways — ${
+                money(x.each)
+              } each to `,
+              x.theses.join(", "),
+            )
+          ),
+        ),
+      )
+      : null,
+  );
+
+  return h(
+    "section",
+    null,
+    h(
+      "header",
+      { class: "page-head" },
+      h("h1", null, "Reports"),
+      h("p", { class: "sub" }, `In ${cur} · as of ${bs.as_of}`),
+    ),
+    sheet,
+    trend,
+    h("div", { class: "grid" }, byAccount, byThesis),
+  );
+}
+
+function compactMoney(n: number): string {
+  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(n);
 }

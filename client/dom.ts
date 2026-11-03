@@ -95,3 +95,11 @@ export function fmtNum(value: string | null | undefined, maxFrac = 4): string {
 export function label(value: string): string {
   return value.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
 }
+
+/** Money with exactly two decimals, e.g. "1234.5" -> "1,234.50". */
+export function fmtMoney(value: string | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const [int, frac = ""] = value.split(".");
+  const f = (frac + "00").slice(0, 2);
+  return fmtNum(`${int}.${f}`, 2);
+}

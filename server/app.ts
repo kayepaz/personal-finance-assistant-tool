@@ -11,6 +11,7 @@ import * as assets from "./services/assets.ts";
 import * as theses from "./services/theses.ts";
 import * as claims from "./services/claims.ts";
 import * as triggers from "./services/triggers.ts";
+import * as valuation from "./services/valuation.ts";
 import * as notes from "./services/notifications.ts";
 import * as prices from "./services/prices.ts";
 import { type JobReport, runJobs } from "./services/engine.ts";
@@ -88,9 +89,9 @@ function buildRouter(opts: AppOptions): Router<State> {
 
   r.post("/api/providers/:id", async (c) => {
     const b = await c.body();
-    const p = prices.PROVIDERS.find((x) => x.id === c.params.id);
+    const p = prices.findProvider(c.params.id);
     if (!p) throw new HttpError(404, "Unknown provider");
-    if (v.has(b, "api_key")) {
+    if (v.has(b, "api_key") && p.needsKey) {
       prices.setProviderKey(data(c), p.id, v.str(b, "api_key", { optional: true, max: 200 }) || null);
     }
     if (v.has(b, "consent")) {
@@ -113,6 +114,17 @@ function buildRouter(opts: AppOptions): Router<State> {
       theses_draft: count("SELECT count(*) AS n FROM theses WHERE status = 'draft'"),
       accounts: count("SELECT count(*) AS n FROM accounts WHERE archived_at IS NULL"),
       assets: count("SELECT count(*) AS n FROM assets WHERE archived_at IS NULL"),
+    };
+  });
+
+  // ----- reports -----
+  r.get("/api/reports", (c) => {
+    const sheet = valuation.balanceSheet(data(c), cache(c), c.state.today());
+    return {
+      balance_sheet: sheet,
+      net_worth: valuation.netWorthHistory(data(c), sheet),
+      by_account: valuation.allocationByAccount(sheet),
+      by_thesis: valuation.allocationByThesis(data(c), sheet),
     };
   });
 
