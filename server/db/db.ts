@@ -6,6 +6,8 @@ export type Row = Record<string, unknown>;
 export interface Databases {
   data: DB;
   cache: DB;
+  /** Folder holding data.db and cache.db; undefined for in-memory databases. */
+  dir?: string;
 }
 
 const MIGRATIONS_DIR = new URL("./migrations/", import.meta.url);
@@ -80,7 +82,7 @@ export function openAll(dataDir: string): Databases {
   const cache = openDatabase(`${dataDir}/cache.db`);
   migrate(data, "data");
   migrate(cache, "cache");
-  return { data, cache };
+  return { data, cache, dir: dataDir };
 }
 
 export function openInMemory(): Databases {

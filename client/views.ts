@@ -1,5 +1,5 @@
 /** Page views. Each view returns an element; `go()` navigates and re-renders. */
-import { del, get, type J, patch, post, setToken } from "./api.ts";
+import { apiRaw, del, get, type J, patch, post, setToken } from "./api.ts";
 import { changeBars, donut, type DonutSlice, foldSlices, lineChart } from "./charts.ts";
 import { field, fmtDate, fmtMoney, fmtNum, formData, h, input, label, select, textarea } from "./dom.ts";
 
@@ -372,11 +372,32 @@ function triggerSummary(t: J): string {
   if (t.type === "sell_after_days") {
     return `Sell ${p.days} days after ${p.from === "purchase" ? "purchase" : "trigger created"}`;
   }
+  if (t.type === "trailing_stop") return `Trailing stop: alert when price falls ${p.percent}% below its high`;
   const base = p.baseline === "fixed" ? `fixed price ${p.fixed_price}` : label(p.baseline).toLowerCase();
   return `Alert when price ${p.direction === "up" ? "rises" : "falls"} ${p.percent}% from ${base}`;
 }
 
 function triggerParamFields(type: string, p: J = {}): HTMLElement {
+  if (type === "trailing_stop") {
+    return h(
+      "div",
+      null,
+      field(
+        "Percent below the high",
+        input("percent", {
+          required: true,
+          pattern: "\\d+(\\.\\d+)?",
+          inputmode: "decimal",
+          value: p.percent ?? "",
+        }),
+      ),
+      h(
+        "p",
+        { class: "hint" },
+        "The high starts at the purchase price and rises with each new daily close. Alerts are checked once a day on closing prices, so intraday dips are not seen.",
+      ),
+    );
+  }
   if (type === "sell_on_date") {
     return h(
       "div",
@@ -431,6 +452,7 @@ function triggerParamFields(type: string, p: J = {}): HTMLElement {
 function paramsFrom(type: string, d: Record<string, string>): J {
   if (type === "sell_on_date") return { date: d.date };
   if (type === "sell_after_days") return { days: Number(d.days), from: d.from };
+  if (type === "trailing_stop") return { percent: d.percent };
   return {
     direction: d.direction,
     percent: d.percent,
@@ -1266,7 +1288,11 @@ export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
 // ---------------------------------------------------------------- settings
 
 export async function settingsView(nav: Nav, onSignOut: () => void): Promise<HTMLElement> {
-  const [s, sessions] = await Promise.all([get("/settings"), get<J[]>("/sessions")]);
+  const [s, sessions, channels] = await Promise.all([
+    get("/settings"),
+    get<J[]>("/sessions"),
+    get<J[]>("/channels"),
+  ]);
   return h(
     "section",
     null,
@@ -1362,6 +1388,8 @@ export async function settingsView(nav: Nav, onSignOut: () => void): Promise<HTM
         ? h("p", { class: "meta" }, `Last run ${new Date(s.last_jobs.ran_at).toLocaleString()}`)
         : null,
     ),
+    alertsPanel(nav, channels),
+    backupPanel(nav, onSignOut),
     h(
       "div",
       { class: "panel" },
@@ -1631,6 +1659,7 @@ const TRIGGER_TYPE_OPTIONS: [string, string][] = [
   ["pct_change", "Price change %"],
   ["sell_on_date", "Sell on a date"],
   ["sell_after_days", "Sell after N days"],
+  ["trailing_stop", "Trailing stop %"],
 ];
 
 export async function triggersView(nav: Nav): Promise<HTMLElement> {
@@ -2053,4 +2082,287 @@ export async function reportsView(nav: Nav): Promise<HTMLElement> {
 
 function compactMoney(n: number): string {
   return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(n);
+}
+
+// ---------------------------------------------------------------- alerts (ntfy / webhook)
+
+function randomTopic(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  return `pfat-${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function alertsPanel(nav: Nav, channels: J[]): HTMLElement {
+  const kindPicker = select("kind", [["ntfy", "Phone via ntfy"], ["webhook", "Webhook"]]);
+  const ntfyFields = h(
+    "div",
+    { class: "subfields" },
+    field(
+      "ntfy server",
+      input("server", { value: "https://ntfy.sh" }),
+      "Your own ntfy server keeps alerts off third-party machines.",
+    ),
+    field(
+      "Topic",
+      input("topic", { value: randomTopic(), pattern: "[A-Za-z0-9_\\-]+" }),
+      "Subscribe to this topic in the ntfy app. Hard to guess = private.",
+    ),
+    field("Access token (optional)", input("token", { type: "password", autocomplete: "off" })),
+  );
+  const hookFields = h(
+    "div",
+    { class: "subfields" },
+    field("URL", input("url", { type: "url", placeholder: "https://…" })),
+    field(
+      "Signing secret (optional)",
+      input("secret", { type: "password", autocomplete: "off" }),
+      "Adds an X-PFAT-Signature HMAC-SHA256 header.",
+    ),
+  );
+  hookFields.hidden = true;
+  kindPicker.addEventListener("change", () => {
+    ntfyFields.hidden = kindPicker.value !== "ntfy";
+    hookFields.hidden = kindPicker.value !== "webhook";
+  });
+
+  const channelCard = (c: J) => {
+    const where = c.kind === "ntfy" ? `${c.config.server}/${c.config.topic}` : c.config.url;
+    const patchIt = (body: J) =>
+      patch(`/channels/${c.id}`, body).then(() => nav.refresh()).catch((e) => nav.toast(e.message, "error"));
+    return h(
+      "div",
+      { class: "provider" },
+      h(
+        "h3",
+        null,
+        c.name,
+        " ",
+        c.consented && c.enabled
+          ? h("span", { class: "badge badge-active" }, "On")
+          : h("span", { class: "badge" }, "Off"),
+      ),
+      h("p", { class: "meta" }, where),
+      field(
+        "What to send",
+        (() => {
+          const sel = select(
+            "detail",
+            [["minimal", "Minimal: just “you have a new item”"], ["full", "Full: title and details"]],
+            {},
+            c.detail,
+          );
+          sel.addEventListener("change", () => patchIt({ detail: sel.value }));
+          return sel;
+        })(),
+      ),
+      h("p", { class: "consent" }, c.consent_text),
+      h(
+        "label",
+        { class: "check" },
+        h("input", {
+          type: "checkbox",
+          checked: c.consented,
+          onchange: (e: Event) => patchIt({ consent: (e.target as HTMLInputElement).checked }),
+        }),
+        " I agree to send the data described above",
+      ),
+      h(
+        "p",
+        { class: "meta" },
+        [
+          c.last_sent_at ? `Last sent ${new Date(c.last_sent_at).toLocaleString()}` : "Nothing sent yet",
+          c.pending ? `${c.pending} waiting` : "",
+          c.last_error ? `Last error: ${c.last_error}` : "",
+        ].filter(Boolean).join(" · "),
+      ),
+      h(
+        "div",
+        { class: "actions" },
+        h("button", {
+          onclick: async () => {
+            try {
+              await post(`/channels/${c.id}/test`);
+              nav.toast("Test sent.", "ok");
+              nav.refresh();
+            } catch (e) {
+              nav.toast((e as Error).message, "error");
+            }
+          },
+        }, "Send test"),
+        h("button", { onclick: () => patchIt({ enabled: !c.enabled }) }, c.enabled ? "Pause" : "Resume"),
+        h("button", {
+          class: "link danger",
+          onclick: () => {
+            if (confirm(`Delete ${c.name}?`)) del(`/channels/${c.id}`).then(() => nav.refresh());
+          },
+        }, "Delete"),
+      ),
+    );
+  };
+
+  return h(
+    "div",
+    { class: "panel" },
+    h("h2", null, "Alerts on your phone or other apps"),
+    h(
+      "p",
+      { class: "hint" },
+      "New to-do items can also be pushed to ntfy (phone notifications) or a webhook. Nothing is sent until you agree to exactly what goes where. They're sent when the background checks run.",
+    ),
+    channels.map(channelCard),
+    details(
+      "Add an alert channel",
+      h(
+        "form",
+        {
+          onsubmit: onSubmit(nav, async (d) => {
+            const config = d.kind === "ntfy"
+              ? { server: d.server, topic: d.topic, token: d.token }
+              : { url: d.url, secret: d.secret };
+            await post("/channels", { kind: d.kind, name: d.name, detail: d.detail, config });
+            nav.toast("Added. Review the consent text and tick the box to turn it on.", "ok");
+            nav.refresh();
+          }),
+        },
+        field("Type", kindPicker),
+        field("Name", input("name", { placeholder: "e.g. My phone" })),
+        ntfyFields,
+        hookFields,
+        field(
+          "What to send",
+          select("detail", [["minimal", "Minimal: just “you have a new item”"], [
+            "full",
+            "Full: title and details",
+          ]]),
+        ),
+        h("button", { type: "submit", class: "primary" }, "Add channel"),
+      ),
+    ),
+  );
+}
+
+// ---------------------------------------------------------------- backups
+
+function backupPanel(nav: Nav, onSignOut: () => void): HTMLElement {
+  const fileInput = h("input", { type: "file", name: "file", accept: ".pfatbak", required: true });
+  const fileInfo = h("p", { class: "meta" });
+  fileInput.addEventListener("change", async () => {
+    fileInfo.textContent = "";
+    const f = fileInput.files?.[0];
+    if (!f) return;
+    const head = new TextDecoder().decode(await f.slice(0, 2000).arrayBuffer());
+    const lines = head.split("\n");
+    try {
+      if (lines[0] !== "PFATBAK1") throw new Error();
+      const header = JSON.parse(lines[1]);
+      fileInfo.textContent = `Backup from ${new Date(header.created_at).toLocaleString()} containing ${
+        header.contents.join(" and ")
+      }.`;
+    } catch {
+      fileInfo.textContent = "This doesn't look like a PFAT backup file.";
+    }
+  });
+
+  return h(
+    "div",
+    { class: "panel" },
+    h("h2", null, "Backups"),
+    h(
+      "p",
+      { class: "hint" },
+      "Backups are encrypted with a passphrase you choose. Keep it safe: without it a backup can't be opened by anyone, including you.",
+    ),
+    details(
+      "Download a backup",
+      h(
+        "form",
+        {
+          onsubmit: onSubmit(nav, async (d, form) => {
+            if (d.passphrase !== d.confirm) throw new Error("Passphrases don't match");
+            const res = await apiRaw("/backups", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ contents: d.contents, passphrase: d.passphrase }),
+            });
+            const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ??
+              "pfat.pfatbak";
+            const url = URL.createObjectURL(await res.blob());
+            const a = h("a", { href: url, download: name });
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 10_000);
+            form.reset();
+            nav.toast(`Saved ${name}.`, "ok");
+          }),
+        },
+        field(
+          "What to include",
+          select("contents", [["data", "My data (accounts, theses, history)"], [
+            "both",
+            "My data and the market-data cache",
+          ], [
+            "cache",
+            "Market-data cache only",
+          ]]),
+          "The cache (prices, exchange rates) can be rebuilt, so it is optional.",
+        ),
+        field(
+          "Backup passphrase",
+          input("passphrase", {
+            type: "password",
+            required: true,
+            minlength: 12,
+            autocomplete: "new-password",
+          }),
+          "At least 12 characters.",
+        ),
+        field(
+          "Confirm passphrase",
+          input("confirm", { type: "password", required: true, autocomplete: "new-password" }),
+        ),
+        h("button", { type: "submit", class: "primary" }, "Download encrypted backup"),
+      ),
+    ),
+    details(
+      "Restore from a backup",
+      h(
+        "form",
+        {
+          onsubmit: onSubmit(nav, async (d) => {
+            const f = fileInput.files?.[0];
+            if (!f) throw new Error("Choose a backup file");
+            const bytes = new TextEncoder().encode(d.passphrase);
+            const encoded = btoa(String.fromCharCode(...bytes));
+            const res = await apiRaw("/restore", {
+              method: "POST",
+              headers: { "x-pfat-backup-passphrase": encoded, "content-type": "application/octet-stream" },
+              body: f,
+            });
+            const r = await res.json();
+            if (r.restored.includes("data")) {
+              setToken(null);
+              nav.toast("Restored. Sign in with the passphrase PFAT used when that backup was made.", "ok");
+              onSignOut();
+            } else {
+              nav.toast("Market-data cache restored.", "ok");
+              nav.refresh();
+            }
+          }),
+        },
+        field("Backup file", fileInput),
+        fileInfo,
+        field(
+          "Backup passphrase",
+          input("passphrase", { type: "password", required: true, autocomplete: "off" }),
+        ),
+        h(
+          "label",
+          { class: "check" },
+          h("input", { type: "checkbox", required: true }),
+          " I understand this replaces the current data. A copy of it is kept in a pre-restore folder next to the database.",
+        ),
+        h("button", { type: "submit", class: "primary" }, "Restore"),
+      ),
+    ),
+  );
 }

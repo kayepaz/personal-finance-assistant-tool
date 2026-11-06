@@ -27,6 +27,9 @@ accounts ──< assets ──< trades ──< sale_allocations >── trades (
    └──< account_snapshots  └── (buy_trade_id: which purchase this thesis covers)
 instruments ──< assets
 revisions  (append-only snapshots of theses, links, claims, triggers)
+net_worth_snapshots (one row per month)
+notification_channels ──< notification_deliveries >── notifications   (outbox)
+trailing_highs (high-water mark per trigger × thesis link)
 consents   (what data may leave the server, and where)
 sessions, settings
 ```

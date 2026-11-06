@@ -3,6 +3,7 @@ import { type DB, type Row, transaction } from "../db/db.ts";
 import { uuidv7 } from "../lib/ids.ts";
 import { badRequest, conflict, notFound } from "../lib/http.ts";
 import * as v from "../lib/validate.ts";
+import { enqueue } from "./channels.ts";
 
 export type Resolution = "adjusted" | "sold" | "dismissed" | "reviewed" | "updated";
 
@@ -20,6 +21,7 @@ export function createNotification(db: DB, n: NewNotification): string {
     `INSERT INTO notifications(id, kind, title, body, ref_type, ref_id, status, created_at)
      VALUES (?, ?, ?, ?, ?, ?, 'open', ?)`,
   ).run(id, n.kind, n.title, n.body, n.refType, n.refId, Date.now());
+  enqueue(db, id); // outbound channels (sent by the background dispatcher)
   return id;
 }
 

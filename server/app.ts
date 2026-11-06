@@ -12,6 +12,8 @@ import * as theses from "./services/theses.ts";
 import * as claims from "./services/claims.ts";
 import * as triggers from "./services/triggers.ts";
 import * as valuation from "./services/valuation.ts";
+import * as backup from "./services/backup.ts";
+import * as channels from "./services/channels.ts";
 import * as notes from "./services/notifications.ts";
 import * as prices from "./services/prices.ts";
 import { type JobReport, runJobs } from "./services/engine.ts";
@@ -115,6 +117,49 @@ function buildRouter(opts: AppOptions): Router<State> {
       accounts: count("SELECT count(*) AS n FROM accounts WHERE archived_at IS NULL"),
       assets: count("SELECT count(*) AS n FROM assets WHERE archived_at IS NULL"),
     };
+  });
+
+  // ----- notification channels -----
+  r.get("/api/channels", (c) => channels.listChannels(data(c)));
+  r.post("/api/channels", async (c) => json(channels.createChannel(data(c), await c.body()), 201));
+  r.patch("/api/channels/:id", async (c) => channels.updateChannel(data(c), c.params.id, await c.body()));
+  r.delete("/api/channels/:id", (c) => channels.deleteChannel(data(c), c.params.id));
+  r.post("/api/channels/:id/test", async (c) => {
+    await channels.testChannel(data(c), c.params.id, c.state.fetchFn);
+    return { ok: true };
+  });
+
+  // ----- backups -----
+  r.post("/api/backups", async (c) => {
+    const b = await c.body();
+    const contents = v.oneOf(b, "contents", ["data", "cache", "both"] as const)!;
+    const { bytes, filename } = await backup.createBackup(
+      c.state.dbs,
+      contents,
+      backup.checkPassphrase(b.passphrase),
+      opts.kdfIterations,
+    );
+    return new Response(bytes as BodyInit, {
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-disposition": `attachment; filename="${filename}"`,
+        "cache-control": "no-store",
+      },
+    });
+  });
+
+  r.post("/api/restore", async (c) => {
+    const size = Number(c.req.headers.get("content-length") ?? 0);
+    if (size > 512 * 1024 * 1024) throw new HttpError(413, "Backup file is too large");
+    const encoded = c.req.headers.get("x-pfat-backup-passphrase") ?? "";
+    let passphrase = "";
+    try {
+      passphrase = new TextDecoder().decode(Uint8Array.from(atob(encoded), (ch) => ch.charCodeAt(0)));
+    } catch {
+      throw new HttpError(400, "Passphrase header is malformed");
+    }
+    const bytes = new Uint8Array(await c.req.arrayBuffer());
+    return await backup.restoreBackup(c.state.dbs, bytes, passphrase);
   });
 
   // ----- reports -----

@@ -8,7 +8,8 @@ import { createNotification, hasOpenNotification } from "./notifications.ts";
 import { latestPrice, refreshPrices, type RefreshResult } from "./prices.ts";
 import { currenciesInUse, type FxResult, refreshFx } from "./fx.ts";
 import { balanceSheet, recordNetWorth } from "./valuation.ts";
-import type { AfterDaysParams, DateParams, PctParams } from "./triggers.ts";
+import { dispatch, type DispatchResult } from "./channels.ts";
+import type { AfterDaysParams, DateParams, PctParams, TrailingParams } from "./triggers.ts";
 
 interface Evaluation {
   fire: boolean;
@@ -83,8 +84,81 @@ function evaluate(
           }${p.percent}% trigger.`,
       };
     }
+    case "trailing_stop": {
+      const p = params as unknown as TrailingParams;
+      if (!link.provider_symbol) return null;
+      const symbol = link.provider_symbol as string;
+      const price = latestPrice(cache, symbol);
+      if (!price) return null;
+      const mark = updateHighWaterMark(data, cache, trigger, link, price, tz);
+      const stop = d.mul(mark.high, d.sub("1", d.div(p.percent, "100", 10)));
+      const drop = d.pctChange(mark.high, price.close as string);
+      return {
+        fire: d.cmp(price.close as string, stop) <= 0,
+        observed: {
+          price: price.close,
+          price_date: price.price_date,
+          high: mark.high,
+          high_date: mark.high_date,
+          stop: d.round(stop, 4),
+          change_pct: drop,
+        },
+        title: `${link.asset_name} is ${d.round(drop.replace("-", ""), 2)}% below its high`,
+        body:
+          `Close ${price.close} on ${price.price_date} vs high ${mark.high} on ${mark.high_date} (daily closes). ` +
+          `Your thesis "${link.thesis_title}" set a ${p.percent}% trailing stop at ${d.round(stop, 2)}.`,
+      };
+    }
   }
   return null;
+}
+
+/**
+ * Highest daily close since the holding started (purchase date, or when an asset-level link was made),
+ * never lower than the purchase price. Kept in data.db and only ever raised.
+ */
+function updateHighWaterMark(
+  data: DB,
+  cache: DB,
+  trigger: Row,
+  link: Row,
+  price: Row,
+  tz?: string,
+): { high: string; high_date: string } {
+  const stored = data.prepare(
+    "SELECT high, high_date FROM trailing_highs WHERE trigger_id = ? AND link_id = ?",
+  )
+    .get(trigger.id as string, link.id as string) as Row | undefined;
+  let high = stored?.high as string | undefined;
+  let highDate = stored?.high_date as string | undefined;
+  if (!stored) {
+    const start = (link.buy_date as string | null) ?? dateFromMs(Number(link.linked_at), tz);
+    if (link.buy_price) {
+      high = link.buy_price as string;
+      highDate = start;
+    }
+    const closes = cache.prepare(
+      "SELECT price_date, close FROM daily_prices WHERE provider_symbol = ? AND price_date >= ?",
+    ).all(link.provider_symbol as string, start);
+    for (const c of closes) {
+      if (!high || d.cmp(c.close as string, high) > 0) {
+        high = c.close as string;
+        highDate = c.price_date as string;
+      }
+    }
+  }
+  if (!high || d.cmp(price.close as string, high) > 0) {
+    high = price.close as string;
+    highDate = price.price_date as string;
+  }
+  if (!stored || stored.high !== high) {
+    data.prepare(
+      `INSERT INTO trailing_highs(trigger_id, link_id, high, high_date, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(trigger_id, link_id) DO UPDATE SET high = excluded.high, high_date = excluded.high_date,
+         updated_at = excluded.updated_at`,
+    ).run(trigger.id as string, link.id as string, high, highDate!, Date.now());
+  }
+  return { high, high_date: highDate! };
 }
 
 export function evaluateTriggers(data: DB, cache: DB, todayStr: string): number {
@@ -224,6 +298,7 @@ export interface JobReport {
   prices: RefreshResult;
   fx: FxResult;
   net_worth: string;
+  delivered: DispatchResult;
   triggers_fired: number;
   claim_reviews: number;
   balance_reminders: number;
@@ -238,13 +313,18 @@ export async function runJobs(dbs: Databases, fetchFn: typeof fetch = fetch): Pr
   const fx = await refreshFx(dbs.data, dbs.cache, currenciesInUse(dbs.data), base, utcDay, fetchFn);
   const sheet = balanceSheet(dbs.data, dbs.cache, todayStr);
   recordNetWorth(dbs.data, sheet);
+  const triggersFired = evaluateTriggers(dbs.data, dbs.cache, todayStr);
+  const claimReviews = queueClaimReviews(dbs.data, todayStr);
+  const balanceReminders = queueBalanceUpdates(dbs.data, todayStr);
+  const delivered = await dispatch(dbs.data, fetchFn);
   return {
     ran_at: Date.now(),
     prices,
     fx,
     net_worth: sheet.totals.net_worth,
-    triggers_fired: evaluateTriggers(dbs.data, dbs.cache, todayStr),
-    claim_reviews: queueClaimReviews(dbs.data, todayStr),
-    balance_reminders: queueBalanceUpdates(dbs.data, todayStr),
+    triggers_fired: triggersFired,
+    claim_reviews: claimReviews,
+    balance_reminders: balanceReminders,
+    delivered,
   };
 }

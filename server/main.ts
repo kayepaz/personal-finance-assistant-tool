@@ -21,7 +21,8 @@ async function tick() {
     const p = r.prices;
     console.log(
       `[jobs] prices +${p.updated.length} deferred ${p.deferred.length} failed ${p.failed.length}; ` +
-        `triggers ${r.triggers_fired}, claim reviews ${r.claim_reviews}, balance reminders ${r.balance_reminders}`,
+        `triggers ${r.triggers_fired}, claim reviews ${r.claim_reviews}, balance reminders ${r.balance_reminders}; ` +
+        `alerts sent ${r.delivered.sent} failed ${r.delivered.failed}`,
     );
   } catch (err) {
     console.error("[jobs] failed:", err);

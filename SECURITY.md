@@ -16,7 +16,10 @@ Only the latest release receives security fixes while PFAT is pre-1.0.
 - One user per instance. Access requires a passphrase (stored as a salted PBKDF2-SHA256 hash).
 - Each device holds a random session token; the server stores only its SHA-256 hash. Sessions can be revoked.
 - Data at rest is plain SQLite on the host; protect the host and its disk. Backups are always encrypted with a
-  user passphrase.
+  user passphrase (PBKDF2-SHA256 → AES-256-GCM, authenticated header). Restore keeps an unencrypted
+  `pre-restore-*` copy next to the live databases; delete it once you're happy with the restore.
+- Alert channels send only what their consent text says; webhook payloads can be verified with the
+  `X-PFAT-Signature` HMAC header.
 - Outbound requests (market data, notification channels) require recorded consent and never include holdings,
   quantities or balances.
 - When serving other devices, run behind HTTPS.

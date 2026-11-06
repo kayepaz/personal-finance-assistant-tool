@@ -53,7 +53,9 @@ calculated.
   - `sell_after_days` — fires X days after the linked purchase (or after the trigger was created).
   - `pct_change` — fires when price moves up/down X% from a baseline: average cost (default), the linked
     purchase price, or a fixed price (the UI prefills today's price).
-  - Trailing stops (later) use daily closes and say so in the UI.
+  - `trailing_stop` — fires when the daily close falls X% below the highest close since the purchase (never
+    lower than the purchase price). The high-water mark is stored per trigger and holding in `data.db`, so it
+    survives the cache being cleared. Daily closes only, stated in the UI.
 - **Revision** — every create/update of a thesis, link, claim or trigger, and every attach/detach of a claim
   or trigger, appends a full snapshot with an optional "why I changed it" note. Nothing is overwritten.
 - **Notification** — a to-do item, never passively dismissed. Kinds: trigger fired, claim review due, balance
@@ -82,15 +84,25 @@ the fallback for currencies the Bank doesn't publish.
   account's value divided evenly among the account's value-tracked assets. Unlinked value shows as "Not in any
   thesis".
 
-## Notification delivery (v0.1)
+## Notification delivery
 
-In-app to-do page first. Webhook and ntfy (self-hostable) channels follow, each behind a consent prompt. Email
-via the user's own SMTP comes later.
+The in-app To do page is the source of truth. New items can also be pushed to **ntfy** (phone notifications,
+self-hostable) or a **webhook** (JSON, optional HMAC-SHA256 `X-PFAT-Signature`). Each channel has a detail
+level: _minimal_ sends only "you have a new item to review"; _full_ sends the title and text, which may
+include tickers, prices and thesis titles. A channel sends nothing until the user ticks a consent box whose
+text names the exact destination and detail level; changing either withdraws consent until re-confirmed.
+Deliveries go through an outbox and are retried up to 5 times on later background runs. Email via the user's
+own SMTP comes later.
 
 ## Backups
 
-Manual. User picks data, cache, or both. Always encrypted with a passphrase the user types (mandatory).
-Device-bound keys are out of scope for now.
+Manual, from Settings. The user picks data, cache, or both. Always encrypted with a passphrase the user types
+(minimum 12 characters): PBKDF2-SHA256 (600,000 iterations) → AES-256-GCM over a gzip-compressed payload of
+consistent SQLite copies. The file header (format, contents, schema versions, KDF salt, IV) is readable but
+authenticated, so tampering is detected. Restore verifies integrity and schema version, upgrades older
+backups, keeps a `pre-restore-<timestamp>/` copy of the replaced files, then swaps the databases in place.
+Restoring data also restores that backup's passphrase and sessions, so every device signs in again.
+Device-bound keys are out of scope.
 
 ## Milestones
 
@@ -100,3 +112,5 @@ Device-bound keys are out of scope for now.
 2. **v0.2** — balance sheet, snapshots, reports (balance sheet, monthly net-worth change, % of net worth pie
    by account and by thesis), FX conversion.
 3. **v0.3** — encrypted backup/restore, webhook + ntfy channels with consent prompts, trailing stops.
+4. **Next** — email channel, more trigger types, hosted options (e.g. Deno Deploy / Cloudflare) with explicit
+   consent.

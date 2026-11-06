@@ -61,3 +61,16 @@ export const get = <T = J>(path: string) => api<T>("GET", path);
 export const post = <T = J>(path: string, body: unknown = {}) => api<T>("POST", path, body);
 export const patch = <T = J>(path: string, body: unknown) => api<T>("PATCH", path, body);
 export const del = (path: string) => api("DELETE", path);
+
+/** A request whose body or response isn't JSON (backups). Throws ApiError with the server's message. */
+export async function apiRaw(path: string, init: RequestInit): Promise<Response> {
+  const token = getToken();
+  const headers = new Headers(init.headers);
+  if (token) headers.set("authorization", `Bearer ${token}`);
+  const res = await fetch(`/api${path}`, { ...init, headers });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, data.error ?? `Request failed (${res.status})`);
+  }
+  return res;
+}

@@ -12,8 +12,9 @@ calculated.
 
 ## Status
 
-Pre-alpha — v0.2 (theses, triggers, claims, balance sheet and reports). v0.3 (encrypted backups, phone alerts,
-trailing stops) is next. See [docs/SPEC.md](docs/SPEC.md) and [docs/DATA_MODEL.md](docs/DATA_MODEL.md).
+Pre-alpha — v0.3: theses, shared claims and triggers (including trailing stops), balance sheet and reports,
+encrypted backups, and phone/webhook alerts. See [docs/SPEC.md](docs/SPEC.md) and
+[docs/DATA_MODEL.md](docs/DATA_MODEL.md).
 
 ## Run it
 
@@ -36,8 +37,65 @@ your data, `cache.db` = market data that can be rebuilt).
 Market-data keys (Alpha Vantage, Finnhub) are entered in Settings, and each provider is only contacted after
 you consent to it.
 
-> Serving PFAT to other devices? Put it behind HTTPS (e.g. Caddy or a Tailscale/WireGuard network). Session
-> tokens and your passphrase must not cross a network in plain text.
+## Use it from other devices
+
+### On your home network (plain HTTP)
+
+1. Start PFAT listening on all interfaces:
+
+   ```sh
+   PFAT_HOST=0.0.0.0 deno task start
+   ```
+
+2. Find the machine's LAN address with `ip -4 addr show | grep inet` (e.g. `192.168.1.50`).
+3. If a firewall is on (`sudo ufw status`), allow PFAT from your LAN only:
+
+   ```sh
+   sudo ufw allow from 192.168.1.0/24 to any port 8787 proto tcp
+   ```
+
+4. On another device, open `http://192.168.1.50:8787` and sign in. Each device appears under Settings →
+   Signed-in devices, where you can sign it out.
+
+Plain HTTP sends your passphrase and session tokens unencrypted, so only do this on a network you trust.
+Browsers also only offer "install app" and offline caching over HTTPS (or on `localhost`). Use one of the
+options below for HTTPS.
+
+### HTTPS with Tailscale (easiest)
+
+[Tailscale](https://tailscale.com) puts your devices on a private network and can issue real certificates.
+
+1. Install Tailscale on the PFAT machine and on each device you'll use, and sign in to the same account.
+2. In the Tailscale admin console, enable **MagicDNS** and **HTTPS certificates**.
+3. Keep PFAT on its default `127.0.0.1` and publish it to your tailnet:
+
+   ```sh
+   tailscale serve --bg 8787
+   ```
+
+4. Open the `https://<machine-name>.<your-tailnet>.ts.net` address it prints, from any of your devices.
+
+Only devices signed in to your tailnet can reach it. Stop with `tailscale serve --https=443 off`.
+
+### HTTPS with Caddy (LAN only, no third party)
+
+[Caddy](https://caddyserver.com) can act as a local certificate authority.
+
+1. Keep PFAT on `127.0.0.1` and install Caddy (`sudo pacman -S caddy` on Arch/Omarchy).
+2. Create a `Caddyfile`, using the machine's LAN address:
+
+   ```
+   https://192.168.1.50 {
+     tls internal
+     reverse_proxy 127.0.0.1:8787
+   }
+   ```
+
+3. Run `caddy run` in that folder (or install it as a service), and allow port 443 through the firewall from
+   your LAN.
+4. Each device must trust Caddy's local root certificate once: copy `root.crt` from Caddy's data folder
+   (`~/.local/share/caddy/pki/authorities/local/` when run as your user) to the device and install it as a
+   trusted certificate. Then open `https://192.168.1.50`.
 
 ## Develop
 

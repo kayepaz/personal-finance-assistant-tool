@@ -6,6 +6,17 @@ All notable changes are documented here. The project follows [Semantic Versionin
 
 ### Added
 
+- Encrypted backups (data, cache, or both) and restore from Settings; AES-256-GCM with a mandatory passphrase,
+  authenticated header, safety copy before restore.
+- Alert channels: ntfy and webhook, each behind its own consent prompt, minimal or full detail, outbox with
+  retries, test button.
+- Trailing-stop trigger with a persisted high-water mark (migration `0005`).
+- README guide for LAN access and HTTPS (Tailscale, Caddy).
+
+### Fixed
+
+- Balances entered from To do were saved with the wrong type on self-directed accounts (migration `0004`).
+
 - Reports page: balance sheet in the base currency, net worth by month with monthly change, and share of
   assets by account and by thesis (even splits listed in an addendum). Monthly net-worth history (migration
   `0003`).
