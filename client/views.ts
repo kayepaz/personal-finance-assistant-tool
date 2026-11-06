@@ -270,13 +270,16 @@ function todoCard(nav: Nav, n: J): HTMLElement {
           onsubmit: onSubmit(
             nav,
             (d) =>
-              post(`/accounts/${n.ref_id}/snapshots`, { amount: d.amount, as_of: todayStr() }).then(() =>
-                nav.refresh()
-              ),
+              post(`/accounts/${n.ref_id}/snapshots`, { amount: d.amount, as_of: todayStr() }).then(() => {
+                nav.toast(`Saved to ${n.account?.name ?? "the account"}'s balance history.`, "ok");
+                nav.refresh();
+              }),
           ),
         },
         input("amount", {
-          placeholder: "Current balance",
+          placeholder: n.account?.kind === "self_directed"
+            ? `Cash balance (${n.account.currency})`
+            : `Current balance${n.account ? ` (${n.account.currency})` : ""}`,
           required: true,
           pattern: "-?\\d+(\\.\\d+)?",
           inputmode: "decimal",
@@ -939,6 +942,46 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
         ),
         a.update_every_days
           ? h("p", { class: "hint" }, `You'll be reminded every ${a.update_every_days} days.`)
+          : null,
+        a.snapshots.length
+          ? details(
+            `Balance history (${a.snapshots.length})`,
+            h(
+              "table",
+              null,
+              h("thead", null, h("tr", null, ["Date", "Amount", "Note", ""].map((c) => h("th", null, c)))),
+              h(
+                "tbody",
+                null,
+                a.snapshots.map((x: J) =>
+                  h(
+                    "tr",
+                    null,
+                    h("td", null, x.as_of),
+                    h("td", { class: "num" }, fmtMoney(x.amount)),
+                    h("td", null, x.note),
+                    h(
+                      "td",
+                      null,
+                      h("button", {
+                        class: "link danger",
+                        onclick: async () => {
+                          if (!confirm(`Delete the ${x.as_of} entry of ${x.amount}?`)) return;
+                          try {
+                            await del(`/snapshots/${x.id}`);
+                            nav.refresh();
+                          } catch (e) {
+                            nav.toast((e as Error).message, "error");
+                          }
+                        },
+                      }, "Delete"),
+                    ),
+                  )
+                ),
+              ),
+            ),
+            h("p", { class: "hint" }, "The newest date counts as the current balance."),
+          )
           : null,
       ),
       h(

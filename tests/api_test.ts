@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { migrate, openDatabase, openInMemory } from "../server/db/db.ts";
 import { createApp } from "../server/app.ts";
-import { evaluateTriggers, queueClaimReviews } from "../server/services/engine.ts";
+import { evaluateTriggers, queueBalanceUpdates, queueClaimReviews } from "../server/services/engine.ts";
 import { setConsent, setProviderKey, storePrice } from "../server/services/prices.ts";
 import { fxRate, refreshFx, storeRate } from "../server/services/fx.ts";
 import { resetLoginBrake } from "../server/services/auth.ts";
@@ -431,6 +431,8 @@ Deno.test("reports: balance sheet in base currency, net worth history, allocatio
 
 Deno.test("fx: Bank of Canada needs consent, derives cross rates, falls back to Alpha Vantage", async () => {
   const dbs = openInMemory();
+  // Must be the real UTC day: "already fetched today" compares against the time the rate was stored.
+  const day = new Date().toISOString().slice(0, 10);
   const calls: string[] = [];
   const fakeFetch = ((input: string | URL) => {
     const url = new URL(String(input));
@@ -451,12 +453,12 @@ Deno.test("fx: Bank of Canada needs consent, derives cross rates, falls back to 
     }));
   }) as typeof fetch;
 
-  let r = await refreshFx(dbs.data, dbs.cache, ["USD", "EUR"], "CAD", "2026-11-03", fakeFetch);
+  let r = await refreshFx(dbs.data, dbs.cache, ["USD", "EUR"], "CAD", day, fakeFetch);
   assert.equal(calls.length, 0, "no request without consent");
   assert.equal(r.missing.length, 2);
 
   setConsent(dbs.data, "market_data:bankofcanada", "test", true);
-  r = await refreshFx(dbs.data, dbs.cache, ["USD", "EUR", "ISK"], "CAD", "2026-11-03", fakeFetch);
+  r = await refreshFx(dbs.data, dbs.cache, ["USD", "EUR", "ISK"], "CAD", day, fakeFetch);
   assert.deepEqual(calls, ["www.bankofcanada.ca/valet/observations/FXUSDCAD,FXEURCAD/json"]);
   assert.equal(fxRate(dbs.cache, "USD", "CAD")!.rate, "1.40");
   assert.equal(fxRate(dbs.cache, "CAD", "USD")!.rate, "0.7142857143");
@@ -465,8 +467,57 @@ Deno.test("fx: Bank of Canada needs consent, derives cross rates, falls back to 
 
   setProviderKey(dbs.data, "alphavantage", "AV");
   setConsent(dbs.data, "market_data:alphavantage", "test", true);
-  r = await refreshFx(dbs.data, dbs.cache, ["USD", "EUR", "ISK"], "CAD", "2026-11-03", fakeFetch);
+  r = await refreshFx(dbs.data, dbs.cache, ["USD", "EUR", "ISK"], "CAD", day, fakeFetch);
   assert.equal(calls.length, 2, "Bank of Canada not asked again the same day");
   assert.equal(fxRate(dbs.cache, "ISK", "CAD")!.rate, "0.0101");
   assert.equal(r.missing.length, 0);
+});
+
+Deno.test("balances: self-directed accounts record cash; To do updates land where the account page reads them", async () => {
+  const { dbs, ok, call } = await setup();
+  const tfsa = await ok("POST", "/api/accounts", {
+    name: "TFSA",
+    kind: "self_directed",
+    update_every_days: 30,
+  });
+  const house = await ok("POST", "/api/accounts", {
+    name: "House",
+    kind: "real_estate",
+    update_every_days: 30,
+  });
+  // The To do form sends no kind: each account gets the kind it uses.
+  assert.equal((await ok("POST", `/api/accounts/${tfsa.id}/snapshots`, { amount: "1200" })).kind, "cash");
+  assert.equal((await ok("POST", `/api/accounts/${house.id}/snapshots`, { amount: "900000" })).kind, "value");
+  assert.equal(
+    (await call("POST", `/api/accounts/${tfsa.id}/snapshots`, { amount: "1", kind: "value" })).status,
+    400,
+  );
+  const sheet = (await ok("GET", "/api/reports")).balance_sheet;
+  assert.equal(sheet.accounts.find((a: J) => a.name === "TFSA").value_base, "1200");
+
+  // Deleting a mistaken entry falls back to the previous one.
+  const wrong = await ok("POST", `/api/accounts/${house.id}/snapshots`, { amount: "9000000" });
+  await ok("DELETE", `/api/snapshots/${wrong.id}`);
+  assert.equal((await ok("GET", `/api/accounts/${house.id}`)).snapshots.length, 1);
+
+  // Reminders for self-directed accounts ask for the cash balance and are satisfied by it.
+  assert.equal(queueBalanceUpdates(dbs.data, "2099-01-01"), 2);
+  const titles = ((await ok("GET", "/api/notifications")) as unknown as J[]).map((n) => n.title);
+  assert.ok(titles.includes("Update the cash balance of TFSA"));
+});
+
+Deno.test("migration 0004 re-files self-directed 'value' balances as cash", () => {
+  const db = openDatabase(":memory:");
+  db.exec("PRAGMA foreign_keys = OFF");
+  for (const f of ["0001_init.sql", "0002_shared_claims_triggers.sql", "0003_net_worth_history.sql"]) {
+    db.exec(Deno.readTextFileSync(new URL(`../server/db/migrations/data/${f}`, import.meta.url)));
+  }
+  db.exec("PRAGMA user_version = 3; PRAGMA foreign_keys = ON;");
+  db.exec(`
+    INSERT INTO accounts(id, name, kind, currency, created_at, updated_at) VALUES ('a1','TFSA','self_directed','CAD',1,1), ('a2','House','real_estate','CAD',1,1);
+    INSERT INTO account_snapshots VALUES ('s1','a1','2026-11-05','value','1500','manual','',1), ('s2','a2','2026-11-05','value','9','manual','',1);
+  `);
+  migrate(db, "data");
+  const kinds = db.prepare("SELECT id, kind FROM account_snapshots ORDER BY id").all().map((r) => r.kind);
+  assert.deepEqual(kinds, ["cash", "value"]);
 });

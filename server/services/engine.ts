@@ -186,14 +186,16 @@ export function queueBalanceUpdates(data: DB, todayStr: string): number {
   let n = 0;
   for (const a of accounts) {
     const last = data.prepare(
-      "SELECT max(as_of) AS as_of FROM account_snapshots WHERE account_id = ?",
-    ).get(a.id as string) as Row;
+      "SELECT max(as_of) AS as_of FROM account_snapshots WHERE account_id = ? AND kind = ?",
+    ).get(a.id as string, a.kind === "self_directed" ? "cash" : "value") as Row;
     const since = (last.as_of as string | null) ?? dateFromMs(Number(a.created_at), tz);
     if (addDays(since, Number(a.update_every_days)) > todayStr) continue;
     if (hasOpenNotification(data, "balance_update_due", "account", a.id as string)) continue;
     createNotification(data, {
       kind: "balance_update_due",
-      title: `Update the balance of ${a.name}`,
+      title: a.kind === "self_directed"
+        ? `Update the cash balance of ${a.name}`
+        : `Update the balance of ${a.name}`,
       body: last.as_of ? `Last updated ${last.as_of}.` : "No balance recorded yet.",
       refType: "account",
       refId: a.id as string,

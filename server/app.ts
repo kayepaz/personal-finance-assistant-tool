@@ -154,6 +154,8 @@ function buildRouter(opts: AppOptions): Router<State> {
     return json(snap, 201);
   });
 
+  r.delete("/api/snapshots/:id", (c) => accounts.deleteSnapshot(data(c), c.params.id));
+
   // ----- instruments -----
   r.get("/api/instruments", (c) => instruments.listInstruments(data(c)));
   r.post("/api/instruments", async (c) => json(instruments.createInstrument(data(c), await c.body()), 201));

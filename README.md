@@ -12,7 +12,8 @@ calculated.
 
 ## Status
 
-Pre-alpha (v0.1 in progress). See [docs/SPEC.md](docs/SPEC.md) and [docs/DATA_MODEL.md](docs/DATA_MODEL.md).
+Pre-alpha — v0.2 (theses, triggers, claims, balance sheet and reports). v0.3 (encrypted backups, phone alerts,
+trailing stops) is next. See [docs/SPEC.md](docs/SPEC.md) and [docs/DATA_MODEL.md](docs/DATA_MODEL.md).
 
 ## Run it
 

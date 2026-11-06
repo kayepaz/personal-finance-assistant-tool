@@ -99,8 +99,23 @@ export function updateAccount(db: DB, id: string, body: Obj): Row {
   return getAccount(db, id);
 }
 
+/** The kind of balance an account records: self-directed accounts record cash (holdings are priced); all others
+ * record their total value. */
+export function snapshotKind(account: Row): "cash" | "value" {
+  return account.kind === "self_directed" ? "cash" : "value";
+}
+
 export function addSnapshot(db: DB, accountId: string, body: Obj, todayStr: string): Row {
-  getAccount(db, accountId);
+  const account = getAccount(db, accountId);
+  const kind = snapshotKind(account);
+  const asked = v.oneOf(body, "kind", ["value", "cash"] as const, { optional: true });
+  if (asked && asked !== kind) {
+    throw badRequest(
+      kind === "cash"
+        ? "Self-directed accounts record their cash balance; holdings are valued from prices"
+        : "This account records its total value, not a separate cash balance",
+    );
+  }
   const id = uuidv7();
   db.prepare(
     `INSERT INTO account_snapshots(id, account_id, as_of, kind, amount, source, note, created_at)
@@ -109,12 +124,17 @@ export function addSnapshot(db: DB, accountId: string, body: Obj, todayStr: stri
     id,
     accountId,
     v.date(body, "as_of", { optional: true }) ?? todayStr,
-    v.oneOf(body, "kind", ["value", "cash"] as const, { optional: true }) ?? "value",
+    kind,
     v.dec(body, "amount")!,
     v.str(body, "note", { optional: true, max: 1000 }) ?? "",
     Date.now(),
   );
   return db.prepare("SELECT * FROM account_snapshots WHERE id = ?").get(id) as Row;
+}
+
+export function deleteSnapshot(db: DB, id: string): void {
+  const r = db.prepare("DELETE FROM account_snapshots WHERE id = ?").run(id);
+  if (r.changes === 0) throw notFound("Balance entry not found");
 }
 
 export function listSnapshots(db: DB, accountId: string): Row[] {

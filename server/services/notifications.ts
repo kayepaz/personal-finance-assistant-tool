@@ -68,6 +68,12 @@ function enrich(db: DB, n: Row): Row {
       return { ...n, claim: { ...c, theses } };
     }
   }
+  if (n.kind === "balance_update_due") {
+    const a = db.prepare("SELECT id, name, kind, currency FROM accounts WHERE id = ?").get(
+      n.ref_id as string,
+    );
+    if (a) return { ...n, account: a };
+  }
   return n;
 }
 
