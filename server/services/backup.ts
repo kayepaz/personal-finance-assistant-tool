@@ -231,6 +231,11 @@ export async function restoreBackup(
     Deno.removeSync(verified[set]);
     const fresh = openDatabase(path);
     migrate(fresh, set);
+    if (set === "data") {
+      // Never bring sign-ins back from a backup: that would revive devices signed out since, and leave devices
+      // signed in that the user expects a restore to reset. Every device signs in again.
+      fresh.exec("DELETE FROM sessions");
+    }
     dbs[set] = fresh;
   }
   return { restored: header.contents, safety_copy: safety, backup_created_at: header.created_at };

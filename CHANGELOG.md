@@ -15,6 +15,8 @@ All notable changes are documented here. The project follows [Semantic Versionin
 
 ### Fixed
 
+- Restoring a backup brought back the sign-ins saved in it, so other devices stayed signed in. A restore now
+  signs out every device.
 - Balances entered from To do were saved with the wrong type on self-directed accounts (migration `0004`).
 
 - Reports page: balance sheet in the base currency, net worth by month with monthly change, and share of

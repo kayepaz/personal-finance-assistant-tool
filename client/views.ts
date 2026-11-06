@@ -2341,7 +2341,10 @@ function backupPanel(nav: Nav, onSignOut: () => void): HTMLElement {
             const r = await res.json();
             if (r.restored.includes("data")) {
               setToken(null);
-              nav.toast("Restored. Sign in with the passphrase PFAT used when that backup was made.", "ok");
+              nav.toast(
+                "Restored. Every device is signed out; sign in with the passphrase PFAT used when that backup was made.",
+                "ok",
+              );
               onSignOut();
             } else {
               nav.toast("Market-data cache restored.", "ok");
@@ -2359,7 +2362,7 @@ function backupPanel(nav: Nav, onSignOut: () => void): HTMLElement {
           "label",
           { class: "check" },
           h("input", { type: "checkbox", required: true }),
-          " I understand this replaces the current data. A copy of it is kept in a pre-restore folder next to the database.",
+          " I understand this replaces the current data and signs out every device. A copy of the current data is kept in a pre-restore folder next to the database.",
         ),
         h("button", { type: "submit", class: "primary" }, "Restore"),
       ),

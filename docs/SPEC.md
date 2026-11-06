@@ -101,8 +101,8 @@ Manual, from Settings. The user picks data, cache, or both. Always encrypted wit
 consistent SQLite copies. The file header (format, contents, schema versions, KDF salt, IV) is readable but
 authenticated, so tampering is detected. Restore verifies integrity and schema version, upgrades older
 backups, keeps a `pre-restore-<timestamp>/` copy of the replaced files, then swaps the databases in place.
-Restoring data also restores that backup's passphrase and sessions, so every device signs in again.
-Device-bound keys are out of scope.
+Restoring data signs out every device (sign-ins are never restored) and brings back the login passphrase that
+was in use when the backup was made. Device-bound keys are out of scope.
 
 ## Milestones
 

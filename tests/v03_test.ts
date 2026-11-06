@@ -98,6 +98,11 @@ Deno.test("backup: encrypted, authenticated, and restores data over the live dat
     assert.equal(res2.status, 200, await res2.clone().text());
     const titles = dbs.data.prepare("SELECT title FROM theses ORDER BY title").all().map((t) => t.title);
     assert.deepEqual(titles, ["Before backup"]);
+
+    // Every device is signed out, including ones that were signed in when the backup was made.
+    assert.equal((dbs.data.prepare("SELECT count(*) AS n FROM sessions").get() as J).n, 0);
+    assert.equal((await c.call("GET", "/api/dashboard")).status, 401);
+    assert.ok(await loginToken(app), "sign in again with the backup's passphrase");
     dbs.data.close();
     dbs.cache.close();
   } finally {
