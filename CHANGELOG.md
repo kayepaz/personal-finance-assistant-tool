@@ -1,17 +1,11 @@
 # Changelog
 
 All notable changes are documented here. The project follows [Semantic Versioning](https://semver.org/).
+Versions are not tagged yet; the headings below group the work by milestone.
 
 ## Unreleased
 
 ### Added
-
-- History entries show what changed: a collapsed table of each field's before and after values (or the initial
-  values on create), and thesis history names the claim, trigger or holding involved.
-
-### Changed
-
-- Sign out moved from Settings to the top-right of the main menu.
 
 - Price-target trigger ("sell at $X"), at or above / at or below.
 - Crypto (Alpha Vantage digital currency; Finnhub exchange symbols) and precious-metal (spot rate) prices.
@@ -19,6 +13,21 @@ All notable changes are documented here. The project follows [Semantic Versionin
 - Change the login passphrase (signs out other devices).
 - Edit trades and instruments; change an account's type with its balance history carried over.
 - Settings → Storage: size, tables and rows for each database, and pre-restore copies.
+- History entries show what changed: a collapsed table of each field's before and after values (or the initial
+  values on create), and thesis history names the claim, trigger or holding involved.
+
+### Changed
+
+- Sign out moved from Settings to the top-right of the main menu.
+
+### Fixed
+
+- Restoring a backup brought back the sign-ins saved in it, so other devices stayed signed in. A restore now
+  signs out every device.
+
+## 0.3.0 — encrypted backups, alerts, trailing stops
+
+### Added
 
 - Encrypted backups (data, cache, or both) and restore from Settings; AES-256-GCM with a mandatory passphrase,
   authenticated header, safety copy before restore.
@@ -29,18 +38,23 @@ All notable changes are documented here. The project follows [Semantic Versionin
 
 ### Fixed
 
-- Restoring a backup brought back the sign-ins saved in it, so other devices stayed signed in. A restore now
-  signs out every device.
 - Balances entered from To do were saved with the wrong type on self-directed accounts (migration `0004`).
+
+## 0.2.0 — balance sheet and reports
+
+### Added
 
 - Reports page: balance sheet in the base currency, net worth by month with monthly change, and share of
   assets by account and by thesis (even splits listed in an addendum). Monthly net-worth history (migration
   `0003`).
 - Exchange rates from the Bank of Canada (keyless, with its own consent checkbox), Alpha Vantage fallback.
-- GitHub Actions CI: format, lint, type-check, tests and a start-up smoke test.
-
 - Claims and triggers are a shared library: attach one to many theses, pick existing ones or "Add new" from a
   thesis, and manage them on the new Claims and Triggers pages (migration `0002`).
+- GitHub Actions CI: format, lint, type-check, tests and a start-up smoke test.
+
+## 0.1.0 — first slice
+
+### Added
 
 - Deno server with two SQLite databases (`data.db`, `cache.db`) and a numbered migration runner.
 - Passphrase setup, login, and per-device revocable sessions.
