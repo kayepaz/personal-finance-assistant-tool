@@ -1,6 +1,6 @@
 import { type DB, type Row, transaction } from "../db/db.ts";
 import { uuidv7 } from "../lib/ids.ts";
-import { badRequest, conflict, notFound } from "../lib/http.ts";
+import { badRequest, conflict, HttpError, notFound } from "../lib/http.ts";
 import * as v from "../lib/validate.ts";
 
 export const ACCOUNT_KINDS = [
@@ -94,6 +94,9 @@ export function updateAccount(db: DB, id: string, body: Obj, change?: KindChange
     throw conflict(
       "Real estate accounts hold only houses and mortgages; move or remove this account's assets first",
     );
+  }
+  if (newKind === "cash" && current.kind !== "cash" && assetCount) {
+    throw conflict("Cash accounts don't hold assets; move or remove this account's assets first");
   }
   const intoRealEstate = current.kind !== "real_estate" && newKind === "real_estate";
   const sets: string[] = [];
@@ -222,4 +225,52 @@ export function latestSnapshot(db: DB, accountId: string, kind: "value" | "cash"
   return db.prepare(
     `SELECT * FROM account_snapshots WHERE account_id = ? AND kind = ? ORDER BY as_of DESC, created_at DESC LIMIT 1`,
   ).get(accountId, kind) as Row | undefined;
+}
+
+// ---------- deleting ----------
+
+export interface AccountDependents {
+  assets: { id: string; name: string; category: string | null; trades: number; theses: string[] }[];
+  balance_entries: number;
+  linked_from: { id: string; name: string }[];
+}
+
+/** Assets block deletion; balance history is deleted with the account; links from other accounts are cleared. */
+export function accountDependents(db: DB, id: string): AccountDependents {
+  getAccount(db, id);
+  const assets = db.prepare("SELECT id, name, category FROM assets WHERE account_id = ? ORDER BY name").all(
+    id,
+  );
+  return {
+    assets: assets.map((a) => ({
+      id: a.id as string,
+      name: a.name as string,
+      category: (a.category as string | null) ?? null,
+      trades: Number(
+        (db.prepare("SELECT count(*) AS n FROM trades WHERE asset_id = ?").get(a.id as string) as Row).n,
+      ),
+      theses: db.prepare(
+        `SELECT t.title FROM thesis_links l JOIN theses t ON t.id = l.thesis_id
+         WHERE l.asset_id = ? AND l.unlinked_at IS NULL ORDER BY t.title`,
+      ).all(a.id as string).map((t) => t.title as string),
+    })),
+    balance_entries: Number(
+      (db.prepare("SELECT count(*) AS n FROM account_snapshots WHERE account_id = ?").get(id) as Row).n,
+    ),
+    linked_from: db.prepare("SELECT id, name FROM accounts WHERE linked_account_id = ?").all(
+      id,
+    ) as unknown as {
+      id: string;
+      name: string;
+    }[],
+  };
+}
+
+export function deleteAccount(db: DB, id: string): void {
+  const deps = accountDependents(db, id);
+  if (deps.assets.length) throw new HttpError(409, "Delete this account's assets first", deps);
+  transaction(db, () => {
+    db.prepare("DELETE FROM notifications WHERE ref_type = 'account' AND ref_id = ?").run(id);
+    db.prepare("DELETE FROM accounts WHERE id = ?").run(id); // balance history cascades; links are set to NULL
+  });
 }

@@ -907,7 +907,12 @@ export async function accountsView(nav: Nav): Promise<HTMLElement> {
 }
 
 export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
-  const [a, instruments] = await Promise.all([get(`/accounts/${id}`), get<J[]>("/instruments")]);
+  const [a, instruments, deps] = await Promise.all([
+    get(`/accounts/${id}`),
+    get<J[]>("/instruments"),
+    get(`/accounts/${id}/dependents`),
+  ]);
+  a.dependents = deps;
   if (a.kind === "real_estate") return realEstateView(nav, a);
   const tradeable = a.kind === "self_directed";
   const lastValue = a.snapshots.find((s: J) => s.kind === "value");
@@ -1045,10 +1050,13 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
           )
           : null,
       ),
-      h(
+      a.kind === "cash" && !a.assets.length ? null : h(
         "div",
         { class: "panel" },
-        h("h2", null, "Assets"),
+        h("h2", null, a.kind === "cash" ? "Assets (not used for cash accounts)" : "Assets"),
+        a.kind === "cash"
+          ? h("p", { class: "hint" }, "Cash accounts just record a balance. Delete these assets to tidy up.")
+          : null,
         a.assets.length
           ? h(
             "ul",
@@ -1069,7 +1077,7 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
             ),
           )
           : empty("No assets yet."),
-        details(
+        a.kind === "cash" ? null : details(
           "Add asset",
           h(
             "form",
@@ -1112,6 +1120,10 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
 }
 
 function accountSettings(nav: Nav, a: J): HTMLElement {
+  return h("div", null, accountSettingsForm(nav, a), deleteAccountSection(nav, a));
+}
+
+function accountSettingsForm(nav: Nav, a: J): HTMLElement {
   const id = a.id;
   const tradeable = a.kind === "self_directed";
   return details(
@@ -1144,6 +1156,88 @@ function accountSettings(nav: Nav, a: J): HTMLElement {
       field("Notes", textarea("notes", {}, a.notes)),
       h("button", { type: "submit" }, "Save"),
     ),
+  );
+}
+
+function deleteAccountSection(nav: Nav, a: J): HTMLElement {
+  const deps = a.dependents as J;
+  const blocked = deps.assets.length > 0;
+  const what = (x: J) =>
+    [
+      x.category === "mortgage" ? "mortgage" : x.category === "property" ? "house" : "",
+      x.trades ? `${x.trades} trade${x.trades === 1 ? "" : "s"}` : "",
+      x.theses.length ? `in ${x.theses.length === 1 ? "thesis" : "theses"}: ${x.theses.join(", ")}` : "",
+    ].filter(Boolean).join(" · ");
+  return details(
+    "Delete account",
+    blocked
+      ? h(
+        "div",
+        null,
+        h(
+          "p",
+          null,
+          `This account still holds ${deps.assets.length} asset${
+            deps.assets.length === 1 ? "" : "s"
+          }. Delete ${
+            deps.assets.length === 1 ? "it" : "them"
+          } first; each asset page has a Delete option that lists anything it depends on.`,
+        ),
+        h(
+          "details",
+          { class: "blockers" },
+          h(
+            "summary",
+            null,
+            `${deps.assets.length} item${deps.assets.length === 1 ? "" : "s"} to delete first`,
+          ),
+          h(
+            "ul",
+            null,
+            deps.assets.map((x: J) =>
+              h(
+                "li",
+                null,
+                link(nav, `/assets/${x.id}`, x.name),
+                what(x) ? h("span", { class: "meta" }, what(x)) : null,
+              )
+            ),
+          ),
+        ),
+      )
+      : h(
+        "div",
+        null,
+        h(
+          "p",
+          null,
+          deps.balance_entries
+            ? `Deletes the account and its ${deps.balance_entries} balance entr${
+              deps.balance_entries === 1 ? "y" : "ies"
+            }. This can't be undone.`
+            : "Deletes the account. This can't be undone.",
+        ),
+        deps.linked_from.length
+          ? h(
+            "p",
+            { class: "hint" },
+            `Also linked from: ${deps.linked_from.map((x: J) => x.name).join(", ")} (the link is removed).`,
+          )
+          : null,
+        h("button", {
+          class: "danger-button",
+          onclick: async () => {
+            if (!confirm(`Delete “${a.name}”?`)) return;
+            try {
+              await del(`/accounts/${a.id}`);
+              nav.toast(`Deleted ${a.name}.`, "ok");
+              nav.go("/accounts");
+            } catch (e) {
+              nav.toast((e as Error).message, "error");
+            }
+          },
+        }, "Delete account"),
+      ),
   );
 }
 
@@ -1291,6 +1385,7 @@ export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
     a.instrument_id ? get(`/instruments/${a.instrument_id}`) : Promise.resolve(null),
   ]);
   a.price_source = inst?.price_source;
+  const deps = await get(`/assets/${id}/dependents`);
   const price = a.latest_price;
 
   const sellForm = h(
@@ -1492,6 +1587,7 @@ export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
       : null,
     inst ? pricesPanel(nav, inst) : null,
     inst ? instrumentSettings(nav, inst) : null,
+    deleteAssetSection(nav, a, deps),
   );
 }
 
@@ -1661,6 +1757,73 @@ function pricesPanel(nav: Nav, inst: J): HTMLElement {
         ),
       )
       : null,
+  );
+}
+
+function deleteAssetSection(nav: Nav, a: J, deps: J): HTMLElement {
+  const count = deps.trades.length + deps.theses.length;
+  return details(
+    "Delete asset",
+    count
+      ? h(
+        "div",
+        null,
+        h(
+          "p",
+          null,
+          "Remove what depends on this asset first: delete its trades (sales before purchases) and unlink it from its theses.",
+        ),
+        h(
+          "details",
+          { class: "blockers" },
+          h("summary", null, `${count} item${count === 1 ? "" : "s"} to remove first`),
+          h(
+            "ul",
+            null,
+            deps.trades.map((t: J) =>
+              h(
+                "li",
+                null,
+                `${label(t.side)} on ${t.trade_date}: ${fmtNum(t.quantity)} @ ${fmtNum(t.price)}`,
+                h("span", { class: "meta" }, "Delete it in the Trades table above"),
+              )
+            ),
+            deps.theses.map((t: J) =>
+              h(
+                "li",
+                null,
+                "Thesis ",
+                link(nav, `/theses/${t.id}`, t.title),
+                h("span", { class: "meta" }, "Unlink it under Holdings on the thesis page"),
+              )
+            ),
+          ),
+        ),
+      )
+      : h(
+        "div",
+        null,
+        h(
+          "p",
+          null,
+          a.category
+            ? "Deletes this asset and its value history. This can't be undone."
+            : "Deletes this asset. This can't be undone.",
+        ),
+        h("button", {
+          class: "danger-button",
+          onclick: async () => {
+            if (!confirm(`Delete “${a.name}”?`)) return;
+            try {
+              await del(`/assets/${a.id}`);
+              nav.toast(`Deleted ${a.name}.`, "ok");
+              nav.go(`/accounts/${a.account_id}`);
+            } catch (e) {
+              nav.toast((e as Error).message, "error");
+            }
+          },
+        }, "Delete asset"),
+      ),
   );
 }
 

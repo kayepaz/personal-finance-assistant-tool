@@ -20,8 +20,12 @@ Versions are not tagged yet; the headings below group the work by milestone.
   history; the account's value is houses minus mortgages, shown itemized on the balance sheet. Existing real
   estate balances become a house (migration `0007`).
 
+- Delete accounts and assets from their settings. Anything that must go first (assets; or an asset's trades
+  and thesis links) is listed in a collapsed panel; balance and value history are deleted with their owner.
+
 ### Changed
 
+- Cash accounts are a simple balance: they no longer hold assets.
 - Sign out moved from Settings to the top-right of the main menu.
 
 ### Fixed

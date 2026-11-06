@@ -213,6 +213,8 @@ function buildRouter(opts: AppOptions): Router<State> {
     }
     return accounts.updateAccount(data(c), c.params.id, b, { currentValue, today: c.state.today() });
   });
+  r.get("/api/accounts/:id/dependents", (c) => accounts.accountDependents(data(c), c.params.id));
+  r.delete("/api/accounts/:id", (c) => accounts.deleteAccount(data(c), c.params.id));
   r.post("/api/accounts/:id/snapshots", async (c) => {
     const snap = accounts.addSnapshot(data(c), c.params.id, await c.body(), c.state.today());
     // Recording a balance completes any "update the balance" to-do for this account.
@@ -263,6 +265,8 @@ function buildRouter(opts: AppOptions): Router<State> {
     };
   });
   r.patch("/api/assets/:id", async (c) => assets.updateAsset(data(c), c.params.id, await c.body()));
+  r.get("/api/assets/:id/dependents", (c) => assets.assetDependents(data(c), c.params.id));
+  r.delete("/api/assets/:id", (c) => assets.deleteAsset(data(c), c.params.id));
   r.post(
     "/api/assets/:id/buys",
     async (c) => json(assets.recordBuy(data(c), c.params.id, await c.body()), 201),

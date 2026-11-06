@@ -789,3 +789,23 @@ table.sheet tr.sub-row td {
 table.sheet tr.sub-row td:first-child {
   padding-left: 1.4rem;
 }
+button.danger-button {
+  background: var(--danger);
+  color: var(--surface);
+  border-color: var(--danger);
+}
+details.blockers {
+  margin-top: .4rem;
+}
+details.blockers > summary {
+  cursor: pointer;
+  color: var(--danger);
+  font-weight: 550;
+}
+details.blockers ul {
+  padding-left: 1.2rem;
+  margin: .4rem 0 0;
+}
+details.blockers li {
+  padding: .2rem 0;
+}

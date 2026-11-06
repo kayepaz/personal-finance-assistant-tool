@@ -1,6 +1,6 @@
 import { type DB, type Row, transaction } from "../db/db.ts";
 import { uuidv7 } from "../lib/ids.ts";
-import { badRequest, conflict, notFound } from "../lib/http.ts";
+import { badRequest, conflict, HttpError, notFound } from "../lib/http.ts";
 import * as d from "../lib/decimal.ts";
 import * as v from "../lib/validate.ts";
 import { today } from "../lib/dates.ts";
@@ -62,6 +62,9 @@ export function createAsset(db: DB, body: Obj, todayStr?: string): Row {
     });
   }
   if (body.category) throw badRequest("Only real estate accounts have houses and mortgages");
+  if (account.kind === "cash") {
+    throw badRequest("Cash accounts just record a balance; they don't hold assets");
+  }
 
   const instrumentId = v.str(body, "instrument_id", { optional: true }) || undefined;
   const instrument = instrumentId ? getInstrument(db, instrumentId) : undefined;
@@ -139,6 +142,44 @@ export function latestAssetValue(db: DB, assetId: string): Row | undefined {
   return db.prepare(
     "SELECT * FROM asset_values WHERE asset_id = ? ORDER BY as_of DESC, created_at DESC LIMIT 1",
   ).get(assetId) as Row | undefined;
+}
+
+// ---------- deleting ----------
+
+export interface AssetDependents {
+  trades: { id: string; side: string; trade_date: string; quantity: string; price: string }[];
+  theses: { id: string; title: string; link_id: string }[];
+}
+
+/** What must be removed before an asset can be deleted: its trades and its active thesis links. */
+export function assetDependents(db: DB, id: string): AssetDependents {
+  getAsset(db, id);
+  return {
+    // Sales first: a purchase can't be deleted while a sale still closes it.
+    trades: db.prepare(
+      `SELECT id, side, trade_date, quantity, price FROM trades WHERE asset_id = ?
+       ORDER BY CASE side WHEN 'sell' THEN 0 ELSE 1 END, trade_date DESC`,
+    ).all(id) as unknown as AssetDependents["trades"],
+    theses: db.prepare(
+      `SELECT t.id, t.title, l.id AS link_id FROM thesis_links l JOIN theses t ON t.id = l.thesis_id
+       WHERE l.asset_id = ? AND l.unlinked_at IS NULL ORDER BY t.title`,
+    ).all(id) as unknown as AssetDependents["theses"],
+  };
+}
+
+/**
+ * Delete an asset that has no trades and no active thesis links. Its own value history goes with it, as do
+ * past (already unlinked) thesis links; thesis history keeps their revision records.
+ */
+export function deleteAsset(db: DB, id: string): void {
+  const deps = assetDependents(db, id);
+  if (deps.trades.length || deps.theses.length) {
+    throw new HttpError(409, "Delete this asset's trades and unlink it from its theses first", deps);
+  }
+  transaction(db, () => {
+    db.prepare("DELETE FROM thesis_links WHERE asset_id = ?").run(id);
+    db.prepare("DELETE FROM assets WHERE id = ?").run(id);
+  });
 }
 
 export function updateAsset(db: DB, id: string, body: Obj): Row {
@@ -403,8 +444,11 @@ export function deleteTrade(db: DB, id: string): void {
   transaction(db, () => {
     if (t.side === "buy") {
       if (d.sign(allocatedQty(db, id)) > 0) throw conflict("Delete the sales that close this purchase first");
-      const linked = db.prepare("SELECT 1 FROM thesis_links WHERE buy_trade_id = ?").get(id);
+      const linked = db.prepare("SELECT 1 FROM thesis_links WHERE buy_trade_id = ? AND unlinked_at IS NULL")
+        .get(id);
       if (linked) throw conflict("This purchase is linked to a thesis; unlink it first");
+      // Past (unlinked) links to this purchase go with it; their revision history remains.
+      db.prepare("DELETE FROM thesis_links WHERE buy_trade_id = ?").run(id);
     }
     db.prepare("DELETE FROM trades WHERE id = ?").run(id);
   });

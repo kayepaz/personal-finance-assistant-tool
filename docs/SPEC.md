@@ -38,6 +38,10 @@ calculated.
   Prices the user records live in `data.db`; the newest date wins, and a manual price wins a tie. Instruments
   and trades can be edited: a buy's quantity can't drop below what's been sold, dates can't cross the sales
   they're tied to, and a sale's quantity changes by deleting and re-recording it.
+- **Cash account** — a single balance with a dated history; no assets.
+- **Deleting** — an account can be deleted once it holds no assets (its balance history goes with it); an
+  asset once it has no trades and no active thesis links (its value history and past links go with it; thesis
+  history keeps the revision records). The UI lists whatever must be removed first.
 - **Real estate account** — holds only two kinds of asset: a **house** with a declared value and a
   **mortgage** with the amount owed. Each has its own dated value history (no automatic updates). The account
   has no cash or account-level balance; its value is always the sum of its houses minus its mortgages. A house

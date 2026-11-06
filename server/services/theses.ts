@@ -225,7 +225,7 @@ export function thesisHistory(db: DB, thesisId: string): Row[] {
       case "thesis":
         return String(data.title ?? "");
       case "thesis_link":
-        return name("SELECT name FROM assets WHERE id = ?", data.asset_id);
+        return name("SELECT name FROM assets WHERE id = ?", data.asset_id) || "(deleted asset)";
       case "claim":
         return String(data.statement ?? "");
       case "thesis_claim":
@@ -246,10 +246,14 @@ export function thesisHistory(db: DB, thesisId: string): Row[] {
       })),
     );
   add("thesis", thesisId);
+  // Links and attachments are found through their revisions, so history survives a deleted asset or trade.
+  const viaRevisions = (type: string) =>
+    `SELECT DISTINCT entity_id AS id FROM revisions
+     WHERE entity_type = '${type}' AND json_extract(data, '$.thesis_id') = ?`;
   const children: [string, EntityType][] = [
-    ["SELECT id FROM thesis_links WHERE thesis_id = ?", "thesis_link"],
-    ["SELECT id FROM thesis_claims WHERE thesis_id = ?", "thesis_claim"],
-    ["SELECT id FROM thesis_triggers WHERE thesis_id = ?", "thesis_trigger"],
+    [viaRevisions("thesis_link"), "thesis_link"],
+    [viaRevisions("thesis_claim"), "thesis_claim"],
+    [viaRevisions("thesis_trigger"), "thesis_trigger"],
     ["SELECT DISTINCT claim_id AS id FROM thesis_claims WHERE thesis_id = ?", "claim"],
     ["SELECT DISTINCT trigger_id AS id FROM thesis_triggers WHERE thesis_id = ?", "trigger"],
   ];
