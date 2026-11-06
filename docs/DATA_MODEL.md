@@ -30,6 +30,8 @@ revisions  (append-only snapshots of theses, links, claims, triggers)
 net_worth_snapshots (one row per month)
 notification_channels ──< notification_deliveries >── notifications   (outbox)
 trailing_highs (high-water mark per trigger × thesis link)
+assets ──< asset_values   (dated declared values / amounts owed for houses and mortgages)
+instruments ──< manual_prices
 consents   (what data may leave the server, and where)
 sessions, settings
 ```

@@ -16,6 +16,10 @@ Versions are not tagged yet; the headings below group the work by milestone.
 - History entries show what changed: a collapsed table of each field's before and after values (or the initial
   values on create), and thesis history names the claim, trigger or holding involved.
 
+- Real estate accounts hold houses (declared value) and mortgages (amount owed), each with a dated value
+  history; the account's value is houses minus mortgages, shown itemized on the balance sheet. Existing real
+  estate balances become a house (migration `0007`).
+
 ### Changed
 
 - Sign out moved from Settings to the top-right of the main menu.

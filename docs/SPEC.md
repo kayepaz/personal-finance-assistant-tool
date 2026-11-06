@@ -38,6 +38,11 @@ calculated.
   Prices the user records live in `data.db`; the newest date wins, and a manual price wins a tie. Instruments
   and trades can be edited: a buy's quantity can't drop below what's been sold, dates can't cross the sales
   they're tied to, and a sale's quantity changes by deleting and re-recording it.
+- **Real estate account** — holds only two kinds of asset: a **house** with a declared value and a
+  **mortgage** with the amount owed. Each has its own dated value history (no automatic updates). The account
+  has no cash or account-level balance; its value is always the sum of its houses minus its mortgages. A house
+  can be part of a thesis (its declared value counts); a mortgage can't. Update reminders follow the least
+  recently updated figure.
 - **Asset** — an instrument (or a named non-market item, e.g. a house) held in one account. AAPL in a TFSA and
   AAPL in a margin account are two assets. Assets are tracked either by **trades** (self-directed) or by
   **value** (managed portfolios, real estate, art).

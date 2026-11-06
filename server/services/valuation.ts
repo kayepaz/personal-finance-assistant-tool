@@ -6,7 +6,7 @@ import { type DB, getSetting, type Row } from "../db/db.ts";
 import * as d from "../lib/decimal.ts";
 import { addDays, daysBetween } from "../lib/dates.ts";
 import { latestSnapshot, LIABILITY_KINDS } from "./accounts.ts";
-import { openBuys } from "./assets.ts";
+import { latestAssetValue, openBuys } from "./assets.ts";
 import { currentPrice } from "./prices.ts";
 import { convert } from "./fx.ts";
 
@@ -39,6 +39,15 @@ export interface AccountValue {
   warnings: string[];
   holdings: Holding[];
   cash_native: string | null;
+  /** Real estate: each house (positive) and mortgage (negative). */
+  items: {
+    asset_id: string;
+    name: string;
+    category: "property" | "mortgage";
+    value_native: string;
+    value_base: string | null;
+    as_of: string;
+  }[];
 }
 
 export interface BalanceSheet {
@@ -111,6 +120,45 @@ function valueSelfDirected(data: DB, cache: DB, a: Row, base: string, todayStr: 
   return out;
 }
 
+/** Real estate: the sum of its houses' declared values minus its mortgages' balances owed. */
+function valueRealEstate(data: DB, cache: DB, a: Row, base: string, todayStr: string): AccountValue {
+  const out = blank(a);
+  const assets = data.prepare(
+    "SELECT id, name, category FROM assets WHERE account_id = ? AND archived_at IS NULL AND category IS NOT NULL ORDER BY category DESC, name",
+  ).all(a.id as string);
+  if (!assets.length) {
+    out.warnings.push("No houses or mortgages yet");
+    return out;
+  }
+  let total = "0";
+  let oldest: string | null = null;
+  for (const x of assets) {
+    const latest = latestAssetValue(data, x.id as string);
+    if (!latest) continue;
+    const amount = latest.amount as string;
+    const signed = x.category === "mortgage" ? d.mul(amount, "-1") : amount;
+    total = d.add(total, signed);
+    const asOf = latest.as_of as string;
+    if (!oldest || asOf < oldest) oldest = asOf;
+    const inBase = convert(cache, signed, out.currency, base);
+    out.items.push({
+      asset_id: x.id as string,
+      name: x.name as string,
+      category: x.category as "property" | "mortgage",
+      value_native: r2(signed),
+      value_base: inBase === undefined ? null : r2(inBase),
+      as_of: asOf,
+    });
+  }
+  out.value_native = r2(total);
+  out.as_of = oldest;
+  const inBase = convert(cache, total, out.currency, base);
+  if (inBase === undefined) out.warnings.push(`No ${out.currency}→${base} exchange rate`);
+  else out.value_base = r2(inBase);
+  if (oldest) checkStale(out, a, oldest, todayStr);
+  return out;
+}
+
 function valueBySnapshot(data: DB, cache: DB, a: Row, base: string, todayStr: string): AccountValue {
   const out = blank(a);
   const snap = latestSnapshot(data, a.id as string, "value");
@@ -144,6 +192,7 @@ function blank(a: Row): AccountValue {
     warnings: [],
     holdings: [],
     cash_native: null,
+    items: [],
   };
 }
 
@@ -161,6 +210,8 @@ export function balanceSheet(data: DB, cache: DB, todayStr: string): BalanceShee
   const values = accounts.map((a) =>
     a.kind === "self_directed"
       ? valueSelfDirected(data, cache, a, base, todayStr)
+      : a.kind === "real_estate"
+      ? valueRealEstate(data, cache, a, base, todayStr)
       : valueBySnapshot(data, cache, a, base, todayStr)
   );
   let assets = "0", liabilities = "0";
@@ -333,6 +384,11 @@ export function allocationByThesis(
       if (!buy) continue; // fully sold
       value = d.div(d.mul(holding.value_base, buy.open_quantity), holding.quantity, 8);
       detail = `bought ${first.trade_date}`;
+    } else if (account.kind === "real_estate") {
+      const item = account.items.find((i) => i.asset_id === first.asset_id);
+      if (!item || item.value_base === null || item.category !== "property") continue;
+      value = item.value_base;
+      detail = "declared value";
     } else {
       if (account.value_base === null) continue;
       const siblings = Number(

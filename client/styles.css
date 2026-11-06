@@ -765,3 +765,27 @@ details.changes pre.value {
   font-family: var(--mono);
   font-size: .8rem;
 }
+.re-list > li {
+  display: grid;
+  gap: .4rem;
+}
+.re-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+}
+.big-num {
+  font-size: 1.15rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+table.sheet tr.sub-row td {
+  color: var(--muted);
+  font-size: .85rem;
+  border-bottom-style: dashed;
+}
+table.sheet tr.sub-row td:first-child {
+  padding-left: 1.4rem;
+}

@@ -391,7 +391,12 @@ Deno.test("reports: balance sheet in base currency, net worth history, allocatio
   await ok("POST", `/api/accounts/${tfsa.id}/snapshots`, { kind: "cash", amount: "500" });
 
   const house = await ok("POST", "/api/accounts", { name: "House", kind: "real_estate" });
-  await ok("POST", `/api/accounts/${house.id}/snapshots`, { amount: "800000" });
+  await ok("POST", "/api/assets", {
+    account_id: house.id,
+    category: "property",
+    name: "12 Main St",
+    value: "800000",
+  });
   const mortgage = await ok("POST", "/api/accounts", {
     name: "Mortgage",
     kind: "line_of_credit",
@@ -482,7 +487,7 @@ Deno.test("balances: self-directed accounts record cash; To do updates land wher
   });
   const house = await ok("POST", "/api/accounts", {
     name: "House",
-    kind: "real_estate",
+    kind: "managed",
     update_every_days: 30,
   });
   // The To do form sends no kind: each account gets the kind it uses.
@@ -514,7 +519,7 @@ Deno.test("migration 0004 re-files self-directed 'value' balances as cash", () =
   }
   db.exec("PRAGMA user_version = 3; PRAGMA foreign_keys = ON;");
   db.exec(`
-    INSERT INTO accounts(id, name, kind, currency, created_at, updated_at) VALUES ('a1','TFSA','self_directed','CAD',1,1), ('a2','House','real_estate','CAD',1,1);
+    INSERT INTO accounts(id, name, kind, currency, created_at, updated_at) VALUES ('a1','TFSA','self_directed','CAD',1,1), ('a2','House','managed','CAD',1,1);
     INSERT INTO account_snapshots VALUES ('s1','a1','2026-11-05','value','1500','manual','',1), ('s2','a2','2026-11-05','value','9','manual','',1);
   `);
   migrate(db, "data");

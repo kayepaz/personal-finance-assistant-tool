@@ -273,9 +273,15 @@ export function queueBalanceUpdates(data: DB, todayStr: string): number {
   ).all();
   let n = 0;
   for (const a of accounts) {
-    const last = data.prepare(
-      "SELECT max(as_of) AS as_of FROM account_snapshots WHERE account_id = ? AND kind = ?",
-    ).get(a.id as string, a.kind === "self_directed" ? "cash" : "value") as Row;
+    const last = (a.kind === "real_estate"
+      // Real estate: due when the least recently updated house or mortgage is due.
+      ? data.prepare(
+        `SELECT min(latest) AS as_of FROM (SELECT max(v.as_of) AS latest FROM assets x
+           JOIN asset_values v ON v.asset_id = x.id WHERE x.account_id = ? AND x.archived_at IS NULL GROUP BY x.id)`,
+      ).get(a.id as string)
+      : data.prepare(
+        "SELECT max(as_of) AS as_of FROM account_snapshots WHERE account_id = ? AND kind = ?",
+      ).get(a.id as string, a.kind === "self_directed" ? "cash" : "value")) as Row;
     const since = (last.as_of as string | null) ?? dateFromMs(Number(a.created_at), tz);
     if (addDays(since, Number(a.update_every_days)) > todayStr) continue;
     if (hasOpenNotification(data, "balance_update_due", "account", a.id as string)) continue;
@@ -283,6 +289,8 @@ export function queueBalanceUpdates(data: DB, todayStr: string): number {
       kind: "balance_update_due",
       title: a.kind === "self_directed"
         ? `Update the cash balance of ${a.name}`
+        : a.kind === "real_estate"
+        ? `Update the house values and mortgage balances in ${a.name}`
         : `Update the balance of ${a.name}`,
       body: last.as_of ? `Last updated ${last.as_of}.` : "No balance recorded yet.",
       refType: "account",

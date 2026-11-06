@@ -3,6 +3,7 @@ import { uuidv7 } from "../lib/ids.ts";
 import { badRequest, conflict, notFound } from "../lib/http.ts";
 import * as d from "../lib/decimal.ts";
 import * as v from "../lib/validate.ts";
+import { today } from "../lib/dates.ts";
 import { getAccount } from "./accounts.ts";
 import { getInstrument } from "./instruments.ts";
 
@@ -29,14 +30,45 @@ export function listAssets(db: DB, accountId?: string): Row[] {
   return rows.map((r) => withPosition(db, getAsset(db, r.id as string)));
 }
 
-export function createAsset(db: DB, body: Obj): Row {
+export const REAL_ESTATE_CATEGORIES = ["property", "mortgage"] as const;
+
+export function createAsset(db: DB, body: Obj, todayStr?: string): Row {
   const accountId = v.reqStr(body, "account_id");
   const account = getAccount(db, accountId);
+  const name = v.str(body, "name", { optional: true, max: 200 });
+  const notes = v.str(body, "notes", { optional: true, max: 5000 }) ?? "";
+  const now = Date.now();
+
+  if (account.kind === "real_estate") {
+    // Real estate accounts hold houses (declared value) and mortgages (amount owed), each with dated values.
+    if (body.instrument_id) {
+      throw badRequest("Real estate accounts hold houses and mortgages, not market instruments");
+    }
+    const category = v.oneOf(body, "category", REAL_ESTATE_CATEGORIES)!;
+    if (!name) throw badRequest("'name' is required, e.g. the address");
+    const id = uuidv7();
+    return transaction(db, () => {
+      db.prepare(
+        `INSERT INTO assets(id, account_id, instrument_id, name, tracking, notes, category, created_at, updated_at)
+         VALUES (?, ?, NULL, ?, 'value', ?, ?, ?, ?)`,
+      ).run(id, accountId, name, notes, category, now, now);
+      addAssetValue(
+        db,
+        id,
+        { amount: body.value, as_of: body.as_of, note: body.value_note },
+        todayStr ?? today(),
+      );
+      return withPosition(db, getAsset(db, id));
+    });
+  }
+  if (body.category) throw badRequest("Only real estate accounts have houses and mortgages");
+
   const instrumentId = v.str(body, "instrument_id", { optional: true }) || undefined;
   const instrument = instrumentId ? getInstrument(db, instrumentId) : undefined;
   const tracking = v.oneOf(body, "tracking", ["trades", "value"] as const, { optional: true }) ??
     (account.kind === "self_directed" && instrument ? "trades" : "value");
   if (tracking === "trades" && !instrument) throw badRequest("Trade-tracked assets need an instrument");
+  if (!name && !instrument) throw badRequest("'name' is required for assets without an instrument");
   if (instrument) {
     const dup = db.prepare("SELECT id FROM assets WHERE account_id = ? AND instrument_id = ?").get(
       accountId,
@@ -45,7 +77,6 @@ export function createAsset(db: DB, body: Obj): Row {
     if (dup) throw conflict(`${instrument.symbol} is already an asset in this account`);
   }
   const id = uuidv7();
-  const now = Date.now();
   db.prepare(
     `INSERT INTO assets(id, account_id, instrument_id, name, tracking, notes, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -53,14 +84,61 @@ export function createAsset(db: DB, body: Obj): Row {
     id,
     accountId,
     instrument?.id as string ?? null,
-    v.str(body, "name", { optional: true, max: 200 }) || (instrument?.symbol as string) || "",
+    name || (instrument!.symbol as string),
     tracking,
-    v.str(body, "notes", { optional: true, max: 5000 }) ?? "",
+    notes,
     now,
     now,
   );
-  if (!getAsset(db, id).name) throw badRequest("'name' is required for assets without an instrument");
   return withPosition(db, getAsset(db, id));
+}
+
+// ---------- dated values for houses and mortgages ----------
+
+export function addAssetValue(db: DB, assetId: string, body: Obj, todayStr: string): Row {
+  const asset = getAsset(db, assetId);
+  if (!asset.category) throw badRequest("Only houses and mortgages record values this way");
+  const amount = v.dec(body, "amount", { nonNegative: true });
+  if (amount === undefined) {
+    throw badRequest(asset.category === "mortgage" ? "Enter the amount owed" : "Enter the declared value");
+  }
+  const id = uuidv7();
+  db.prepare(
+    "INSERT INTO asset_values(id, asset_id, as_of, amount, note, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(
+    id,
+    assetId,
+    v.date(body, "as_of", { optional: true }) ?? todayStr,
+    amount,
+    v.str(body, "note", { optional: true, max: 1000 }) ?? "",
+    Date.now(),
+  );
+  db.prepare("UPDATE assets SET updated_at = ? WHERE id = ?").run(Date.now(), assetId);
+  return db.prepare("SELECT * FROM asset_values WHERE id = ?").get(id) as Row;
+}
+
+export function deleteAssetValue(db: DB, id: string): void {
+  const row = db.prepare("SELECT asset_id FROM asset_values WHERE id = ?").get(id) as Row | undefined;
+  if (!row) throw notFound("Value not found");
+  const count = Number(
+    (db.prepare("SELECT count(*) AS n FROM asset_values WHERE asset_id = ?").get(
+      row.asset_id as string,
+    ) as Row).n,
+  );
+  if (count <= 1) throw conflict("This is the only value recorded; add a new one before deleting it");
+  db.prepare("DELETE FROM asset_values WHERE id = ?").run(id);
+}
+
+export function listAssetValues(db: DB, assetId: string): Row[] {
+  return db.prepare("SELECT * FROM asset_values WHERE asset_id = ? ORDER BY as_of DESC, created_at DESC").all(
+    assetId,
+  );
+}
+
+export function latestAssetValue(db: DB, assetId: string): Row | undefined {
+  return db.prepare(
+    "SELECT * FROM asset_values WHERE asset_id = ? ORDER BY as_of DESC, created_at DESC LIMIT 1",
+  ).get(assetId) as Row | undefined;
 }
 
 export function updateAsset(db: DB, id: string, body: Obj): Row {
@@ -138,6 +216,10 @@ export function averageCost(db: DB, assetId: string): string | undefined {
 }
 
 export function withPosition(db: DB, asset: Row): Row {
+  if (asset.category) {
+    const latest = latestAssetValue(db, asset.id as string);
+    return { ...asset, value: latest?.amount ?? null, value_as_of: latest?.as_of ?? null };
+  }
   if (asset.tracking !== "trades") return asset;
   const open = openBuys(db, asset.id as string);
   return {

@@ -244,12 +244,18 @@ function buildRouter(opts: AppOptions): Router<State> {
 
   // ----- assets & trades -----
   r.get("/api/assets", (c) => assets.listAssets(data(c), c.url.searchParams.get("account_id") ?? undefined));
-  r.post("/api/assets", async (c) => json(assets.createAsset(data(c), await c.body()), 201));
+  r.post("/api/assets", async (c) => json(assets.createAsset(data(c), await c.body(), c.state.today()), 201));
+  r.post(
+    "/api/assets/:id/values",
+    async (c) => json(assets.addAssetValue(data(c), c.params.id, await c.body(), c.state.today()), 201),
+  );
+  r.delete("/api/asset-values/:id", (c) => assets.deleteAssetValue(data(c), c.params.id));
   r.get("/api/assets/:id", (c) => {
     const a = assets.withPosition(data(c), assets.getAsset(data(c), c.params.id));
     return {
       ...a,
       trades: a.tracking === "trades" ? assets.listTrades(data(c), c.params.id) : [],
+      values: a.category ? assets.listAssetValues(data(c), c.params.id) : [],
       links: theses.linksForAsset(data(c), c.params.id),
       latest_price: a.provider_symbol
         ? prices.currentPrice(data(c), cache(c), a.provider_symbol as string) ?? null

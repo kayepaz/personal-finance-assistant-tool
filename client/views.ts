@@ -263,6 +263,12 @@ function todoCard(nav: Nav, n: J): HTMLElement {
       snooze,
       dismiss,
     ];
+  } else if (n.kind === "balance_update_due" && n.account?.kind === "real_estate") {
+    actions = [
+      h("button", { class: "primary", onclick: () => nav.go(`/accounts/${n.ref_id}`) }, "Update figures"),
+      snooze,
+      dismiss,
+    ];
   } else if (n.kind === "balance_update_due") {
     actions = [
       h(
@@ -902,6 +908,7 @@ export async function accountsView(nav: Nav): Promise<HTMLElement> {
 
 export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
   const [a, instruments] = await Promise.all([get(`/accounts/${id}`), get<J[]>("/instruments")]);
+  if (a.kind === "real_estate") return realEstateView(nav, a);
   const tradeable = a.kind === "self_directed";
   const lastValue = a.snapshots.find((s: J) => s.kind === "value");
   const lastCash = a.snapshots.find((s: J) => s.kind === "cash");
@@ -1100,37 +1107,177 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
         ),
       ),
     ),
-    details(
-      "Account settings",
+    accountSettings(nav, a),
+  );
+}
+
+function accountSettings(nav: Nav, a: J): HTMLElement {
+  const id = a.id;
+  const tradeable = a.kind === "self_directed";
+  return details(
+    "Account settings",
+    h(
+      "form",
+      {
+        onsubmit: onSubmit(nav, (d) =>
+          patch(`/accounts/${id}`, {
+            name: d.name,
+            kind: d.kind,
+            tags: d.tags ? d.tags.split(",").map((s) => s.trim()).filter(Boolean) : [],
+            notes: d.notes ?? "",
+            update_every_days: d.update_every_days ? Number(d.update_every_days) : null,
+          }).then(() => nav.refresh())),
+      },
+      field("Name", input("name", { value: a.name, required: true })),
+      field(
+        "Type",
+        select("kind", ACCOUNT_KINDS, {}, a.kind),
+        tradeable
+          ? "Changing away from self-directed records today's holdings + cash as the account's value, and its cash history becomes value history."
+          : "Changing to self-directed turns the balance history into cash history; then add the holdings and update the cash.",
+      ),
+      field("Tags", input("tags", { value: a.tags.join(", ") })),
+      field(
+        "Update reminder (days)",
+        input("update_every_days", { type: "number", min: 1, value: a.update_every_days ?? "" }),
+      ),
+      field("Notes", textarea("notes", {}, a.notes)),
+      h("button", { type: "submit" }, "Save"),
+    ),
+  );
+}
+
+// ---------------------------------------------------------------- real estate
+
+function realEstateView(nav: Nav, a: J): HTMLElement {
+  const items = a.assets as J[];
+  const owed = (x: J) => x.category === "mortgage";
+  const total = items.reduce((sum, x) => sum + (owed(x) ? -1 : 1) * Number(x.value ?? 0), 0);
+  const oldest = items.map((x) => x.value_as_of).filter(Boolean).sort()[0];
+
+  const categoryPicker = select("category", [["property", "House"], ["mortgage", "Mortgage"]]);
+  const valueLabel = h("span", { class: "field-label" }, "Declared value");
+  const nameInput = input("name", { required: true, placeholder: "e.g. 12 Main St" });
+  categoryPicker.addEventListener("change", () => {
+    const m = categoryPicker.value === "mortgage";
+    valueLabel.textContent = m ? "Amount owed" : "Declared value";
+    nameInput.placeholder = m ? "e.g. TD mortgage" : "e.g. 12 Main St";
+  });
+
+  const row = (x: J) =>
+    h(
+      "li",
+      null,
+      h(
+        "div",
+        { class: "re-row" },
+        h(
+          "div",
+          null,
+          link(nav, `/assets/${x.id}`, h("strong", null, x.name)),
+          " ",
+          h(
+            "span",
+            { class: `badge ${owed(x) ? "badge-abandoned" : "badge-active"}` },
+            owed(x) ? "Mortgage" : "House",
+          ),
+          h(
+            "span",
+            { class: "meta" },
+            `${owed(x) ? "Owed" : "Declared value"} as of ${x.value_as_of ?? "—"}`,
+          ),
+        ),
+        h("div", { class: "big-num" }, `${owed(x) ? "−" : ""}${fmtMoney(x.value)}`),
+      ),
       h(
         "form",
         {
-          onsubmit: onSubmit(nav, (d) =>
-            patch(`/accounts/${id}`, {
-              name: d.name,
-              kind: d.kind,
-              tags: d.tags ? d.tags.split(",").map((s) => s.trim()).filter(Boolean) : [],
-              notes: d.notes ?? "",
-              update_every_days: d.update_every_days ? Number(d.update_every_days) : null,
-            }).then(() => nav.refresh())),
+          class: "row-form",
+          onsubmit: onSubmit(nav, (d) => post(`/assets/${x.id}/values`, d).then(() => nav.refresh())),
         },
-        field("Name", input("name", { value: a.name, required: true })),
-        field(
-          "Type",
-          select("kind", ACCOUNT_KINDS, {}, a.kind),
-          tradeable
-            ? "Changing away from self-directed records today's holdings + cash as the account's value, and its cash history becomes value history."
-            : "Changing to self-directed turns the balance history into cash history; then add the holdings and update the cash.",
-        ),
-        field("Tags", input("tags", { value: a.tags.join(", ") })),
-        field(
-          "Update reminder (days)",
-          input("update_every_days", { type: "number", min: 1, value: a.update_every_days ?? "" }),
-        ),
-        field("Notes", textarea("notes", {}, a.notes)),
-        h("button", { type: "submit" }, "Save"),
+        input("amount", {
+          required: true,
+          pattern: "\\d+(\\.\\d+)?",
+          inputmode: "decimal",
+          placeholder: owed(x) ? "New amount owed" : "New declared value",
+        }),
+        input("as_of", { type: "date", value: todayStr() }),
+        h("button", { type: "submit" }, "Update"),
+      ),
+    );
+
+  return h(
+    "section",
+    null,
+    h("p", { class: "crumbs" }, link(nav, "/accounts", "Accounts")),
+    h(
+      "header",
+      { class: "page-head" },
+      h("h1", null, a.name),
+      h(
+        "p",
+        { class: "sub" },
+        `Real estate · ${a.currency}${a.tags.length ? ` · ${a.tags.join(", ")}` : ""}`,
       ),
     ),
+    a.notes ? h("div", { class: "panel" }, h("h2", null, "Notes"), h("p", null, a.notes)) : null,
+    h(
+      "div",
+      { class: "panel" },
+      h("h2", null, "Value"),
+      h("p", { class: "big" }, fmtMoney(total.toFixed(2)), " ", a.currency),
+      h(
+        "p",
+        { class: "meta" },
+        items.length
+          ? `Houses minus mortgages${oldest ? ` · oldest figure from ${oldest}` : ""}`
+          : "Add a house to start.",
+      ),
+      items.length ? h("ul", { class: "list re-list" }, items.map(row)) : null,
+      a.update_every_days
+        ? h(
+          "p",
+          { class: "hint" },
+          `You'll be reminded every ${a.update_every_days} days to update these figures.`,
+        )
+        : null,
+    ),
+    details(
+      "Add a house or mortgage",
+      h(
+        "form",
+        {
+          onsubmit: onSubmit(nav, async (d, form) => {
+            await post("/assets", {
+              account_id: a.id,
+              category: d.category,
+              name: d.name,
+              value: d.value,
+              as_of: d.as_of,
+              value_note: d.note,
+              notes: d.notes,
+            });
+            form.reset();
+            nav.refresh();
+          }),
+        },
+        field("Type", categoryPicker),
+        field("Name", nameInput),
+        h(
+          "label",
+          { class: "field" },
+          valueLabel,
+          input("value", { required: true, pattern: "\\d+(\\.\\d+)?", inputmode: "decimal" }),
+        ),
+        field("As of", input("as_of", { type: "date", value: todayStr() })),
+        field(
+          "Where the figure came from (optional)",
+          input("note", { placeholder: "e.g. BC Assessment 2026, lender statement" }),
+        ),
+        h("button", { type: "submit", class: "primary" }, "Add"),
+      ),
+    ),
+    accountSettings(nav, a),
   );
 }
 
@@ -1209,6 +1356,10 @@ export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
         { class: "sub" },
         a.symbol
           ? `${a.symbol}${a.exchange ? ` · ${a.exchange}` : ""} · ${a.instrument_currency}`
+          : a.category === "property"
+          ? `House · ${a.account_currency}`
+          : a.category === "mortgage"
+          ? `Mortgage · ${a.account_currency}`
           : "Value-tracked",
       ),
     ),
@@ -1235,7 +1386,8 @@ export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
           ),
         )
         : null,
-      h(
+      a.category ? assetValuePanel(nav, a) : null,
+      a.category === "mortgage" ? null : h(
         "div",
         { class: "panel" },
         h("h2", null, "Theses"),
@@ -1340,6 +1492,72 @@ export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
       : null,
     inst ? pricesPanel(nav, inst) : null,
     inst ? instrumentSettings(nav, inst) : null,
+  );
+}
+
+function assetValuePanel(nav: Nav, a: J): HTMLElement {
+  const owed = a.category === "mortgage";
+  return h(
+    "div",
+    { class: "panel" },
+    h("h2", null, owed ? "Amount owed" : "Declared value"),
+    h("p", { class: "big" }, fmtMoney(a.value), " ", a.account_currency),
+    h("p", { class: "meta" }, `as of ${a.value_as_of ?? "—"}`),
+    h(
+      "form",
+      {
+        class: "row-form",
+        onsubmit: onSubmit(nav, (d) => post(`/assets/${a.id}/values`, d).then(() => nav.refresh())),
+      },
+      input("amount", {
+        required: true,
+        pattern: "\\d+(\\.\\d+)?",
+        inputmode: "decimal",
+        placeholder: owed ? "New amount owed" : "New declared value",
+      }),
+      input("as_of", { type: "date", value: todayStr() }),
+      input("note", { placeholder: owed ? "e.g. lender statement" : "e.g. BC Assessment" }),
+      h("button", { type: "submit" }, "Record"),
+    ),
+    details(
+      `History (${a.values.length})`,
+      h(
+        "table",
+        null,
+        h("thead", null, h("tr", null, ["Date", "Amount", "Note", ""].map((c) => h("th", null, c)))),
+        h(
+          "tbody",
+          null,
+          a.values.map((x: J) =>
+            h(
+              "tr",
+              null,
+              h("td", null, x.as_of),
+              h("td", { class: "num" }, fmtMoney(x.amount)),
+              h("td", null, x.note),
+              h(
+                "td",
+                null,
+                a.values.length > 1
+                  ? h("button", {
+                    class: "link danger",
+                    onclick: async () => {
+                      if (!confirm(`Delete the ${x.as_of} figure of ${x.amount}?`)) return;
+                      try {
+                        await del(`/asset-values/${x.id}`);
+                        nav.refresh();
+                      } catch (e) {
+                        nav.toast((e as Error).message, "error");
+                      }
+                    },
+                  }, "Delete")
+                  : null,
+              ),
+            )
+          ),
+        ),
+      ),
+    ),
   );
 }
 
@@ -2056,7 +2274,22 @@ export async function reportsView(nav: Nav): Promise<HTMLElement> {
       "tbody",
       null,
       h("tr", { class: "section" }, h("th", { colspan: 5 }, title)),
-      rows.length ? rows.map(row) : h("tr", null, h("td", { colspan: 5, class: "empty" }, "None")),
+      rows.length
+        ? rows.flatMap((a) => [
+          row(a),
+          ...(a.items ?? []).map((i: J) =>
+            h(
+              "tr",
+              { class: "sub-row" },
+              h("td", null, link(nav, `/assets/${i.asset_id}`, i.name)),
+              h("td", null, i.category === "mortgage" ? "Mortgage" : "House"),
+              h("td"),
+              h("td", { class: "num" }, money(i.value_base)),
+              h("td", null, i.as_of),
+            )
+          ),
+        ])
+        : h("tr", null, h("td", { colspan: 5, class: "empty" }, "None")),
       h(
         "tr",
         { class: "subtotal" },
@@ -2099,7 +2332,7 @@ export async function reportsView(nav: Nav): Promise<HTMLElement> {
     h(
       "p",
       { class: "hint" },
-      "Self-directed accounts are valued at the latest price plus cash. Other accounts use their latest recorded balance. Approximate by design.",
+      "Self-directed accounts are valued at the latest price plus cash; real estate as its houses minus its mortgages; other accounts use their latest recorded balance. Approximate by design.",
     ),
   );
 

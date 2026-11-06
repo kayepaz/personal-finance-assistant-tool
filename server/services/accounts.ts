@@ -1,6 +1,6 @@
 import { type DB, type Row, transaction } from "../db/db.ts";
 import { uuidv7 } from "../lib/ids.ts";
-import { badRequest, notFound } from "../lib/http.ts";
+import { badRequest, conflict, notFound } from "../lib/http.ts";
 import * as v from "../lib/validate.ts";
 
 export const ACCOUNT_KINDS = [
@@ -84,6 +84,18 @@ export function updateAccount(db: DB, id: string, body: Obj, change?: KindChange
   const current = getAccount(db, id);
   const newKind = v.has(body, "kind") ? v.oneOf(body, "kind", ACCOUNT_KINDS)! : (current.kind as string);
   const crossing = (current.kind === "self_directed") !== (newKind === "self_directed");
+  const assetCount = Number(
+    (db.prepare("SELECT count(*) AS n FROM assets WHERE account_id = ?").get(id) as Row).n,
+  );
+  if (current.kind === "real_estate" && newKind !== "real_estate" && assetCount) {
+    throw conflict("Remove this account's houses and mortgages before changing its type");
+  }
+  if (current.kind !== "real_estate" && newKind === "real_estate" && assetCount) {
+    throw conflict(
+      "Real estate accounts hold only houses and mortgages; move or remove this account's assets first",
+    );
+  }
+  const intoRealEstate = current.kind !== "real_estate" && newKind === "real_estate";
   const sets: string[] = [];
   const vals: (string | number | null)[] = [];
   const set = (col: string, val: string | number | null) => {
@@ -111,7 +123,32 @@ export function updateAccount(db: DB, id: string, body: Obj, change?: KindChange
   set("updated_at", Date.now());
   return transaction(db, () => {
     db.prepare(`UPDATE accounts SET ${sets.join(", ")} WHERE id = ?`).run(...vals, id);
-    if (crossing) {
+    if (intoRealEstate) {
+      // Balances recorded on the account become the value history of a house named after it.
+      const snaps = db.prepare("SELECT * FROM account_snapshots WHERE account_id = ?").all(id);
+      if (snaps.length) {
+        const assetId = uuidv7();
+        const now = Date.now();
+        db.prepare(
+          `INSERT INTO assets(id, account_id, instrument_id, name, tracking, notes, category, created_at, updated_at)
+           VALUES (?, ?, NULL, ?, 'value', '', 'property', ?, ?)`,
+        ).run(assetId, id, current.name as string, now, now);
+        const ins = db.prepare(
+          "INSERT INTO asset_values(id, asset_id, as_of, amount, note, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        );
+        for (const sn of snaps) {
+          ins.run(
+            uuidv7(),
+            assetId,
+            sn.as_of as string,
+            sn.amount as string,
+            sn.note as string,
+            sn.created_at as number,
+          );
+        }
+        db.prepare("DELETE FROM account_snapshots WHERE account_id = ?").run(id);
+      }
+    } else if (crossing) {
       if (newKind === "self_directed") {
         db.prepare("UPDATE account_snapshots SET kind = 'cash' WHERE account_id = ? AND kind = 'value'").run(
           id,
@@ -141,6 +178,9 @@ export function snapshotKind(account: Row): "cash" | "value" {
 
 export function addSnapshot(db: DB, accountId: string, body: Obj, todayStr: string): Row {
   const account = getAccount(db, accountId);
+  if (account.kind === "real_estate") {
+    throw badRequest("Real estate accounts are valued from their houses and mortgages; update those instead");
+  }
   const kind = snapshotKind(account);
   const asked = v.oneOf(body, "kind", ["value", "cash"] as const, { optional: true });
   if (asked && asked !== kind) {

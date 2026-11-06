@@ -150,6 +150,9 @@ export function createLink(db: DB, thesisId: string, body: Obj): Row {
   } else if (buyId) {
     throw badRequest("Value-tracked assets link to the asset, not a purchase");
   }
+  if (asset.category === "mortgage") {
+    throw badRequest("A mortgage can't be part of a thesis; link the house instead");
+  }
   const dup = db.prepare(
     `SELECT id FROM thesis_links WHERE thesis_id = ? AND asset_id = ? AND ifnull(buy_trade_id,'') = ?
      AND unlinked_at IS NULL`,
