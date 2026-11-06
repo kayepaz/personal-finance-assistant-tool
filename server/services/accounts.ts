@@ -1,4 +1,4 @@
-import type { DB, Row } from "../db/db.ts";
+import { type DB, type Row, transaction } from "../db/db.ts";
 import { uuidv7 } from "../lib/ids.ts";
 import { badRequest, notFound } from "../lib/http.ts";
 import * as v from "../lib/validate.ts";
@@ -68,8 +68,22 @@ export function createAccount(db: DB, body: Obj, baseCurrency: string): Row {
   return getAccount(db, id);
 }
 
-export function updateAccount(db: DB, id: string, body: Obj): Row {
+export interface KindChange {
+  /** Today's value of the account in its own currency, used when it stops being self-directed. */
+  currentValue?: string | null;
+  today: string;
+}
+
+/**
+ * Edit an account. Changing the type between self-directed (records cash; holdings are priced) and any other
+ * type (records total value) re-files the balance history so it keeps showing: other → self-directed turns
+ * values into cash; self-directed → other turns cash entries into values and records today's total
+ * (holdings + cash) as the starting value.
+ */
+export function updateAccount(db: DB, id: string, body: Obj, change?: KindChange): Row {
   const current = getAccount(db, id);
+  const newKind = v.has(body, "kind") ? v.oneOf(body, "kind", ACCOUNT_KINDS)! : (current.kind as string);
+  const crossing = (current.kind === "self_directed") !== (newKind === "self_directed");
   const sets: string[] = [];
   const vals: (string | number | null)[] = [];
   const set = (col: string, val: string | number | null) => {
@@ -77,7 +91,7 @@ export function updateAccount(db: DB, id: string, body: Obj): Row {
     vals.push(val);
   };
   if (v.has(body, "name")) set("name", v.reqStr(body, "name", { max: 100 }));
-  if (v.has(body, "kind")) set("kind", v.oneOf(body, "kind", ACCOUNT_KINDS)!);
+  if (v.has(body, "kind")) set("kind", newKind);
   if (v.has(body, "currency")) set("currency", v.currency(body, "currency")!);
   if (v.has(body, "tags")) set("tags", JSON.stringify(v.strArray(body, "tags")));
   if (v.has(body, "notes")) set("notes", v.str(body, "notes", { optional: true, max: 5000 }) ?? "");
@@ -95,8 +109,28 @@ export function updateAccount(db: DB, id: string, body: Obj): Row {
   }
   if (!sets.length) return current;
   set("updated_at", Date.now());
-  db.prepare(`UPDATE accounts SET ${sets.join(", ")} WHERE id = ?`).run(...vals, id);
-  return getAccount(db, id);
+  return transaction(db, () => {
+    db.prepare(`UPDATE accounts SET ${sets.join(", ")} WHERE id = ?`).run(...vals, id);
+    if (crossing) {
+      if (newKind === "self_directed") {
+        db.prepare("UPDATE account_snapshots SET kind = 'cash' WHERE account_id = ? AND kind = 'value'").run(
+          id,
+        );
+      } else {
+        db.prepare("UPDATE account_snapshots SET kind = 'value' WHERE account_id = ? AND kind = 'cash'").run(
+          id,
+        );
+        const value = change?.currentValue;
+        if (value && change) {
+          db.prepare(
+            `INSERT INTO account_snapshots(id, account_id, as_of, kind, amount, source, note, created_at)
+             VALUES (?, ?, ?, 'value', ?, 'auto', 'Holdings + cash when the account type changed', ?)`,
+          ).run(uuidv7(), id, change.today, value, Date.now());
+        }
+      }
+    }
+    return getAccount(db, id);
+  });
 }
 
 /** The kind of balance an account records: self-directed accounts record cash (holdings are priced); all others

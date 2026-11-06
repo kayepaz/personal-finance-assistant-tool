@@ -31,7 +31,13 @@ calculated.
   line of credit, other. Has a currency, optional tags (TFSA, RRSP, non-registered…), free-text jurisdiction
   notes, and a "remind me to update every X days" setting. Liabilities are accounts whose kind is a liability.
   A mortgage (line of credit / other liability) may link to a property account.
-- **Instrument** — something with a market price (ticker + exchange + currency + provider symbol).
+- **Instrument** — something with a price (ticker + exchange + currency + provider symbol). Its price source
+  is _automatic_ (stocks and ETFs via `TIME_SERIES_DAILY`/Finnhub quote; crypto via Alpha Vantage
+  `DIGITAL_CURRENCY_DAILY` in the instrument's currency, or Finnhub with an exchange symbol like
+  `BINANCE:BTCUSDT`; metals via Alpha Vantage spot rates such as `XAU`) or _manual_ (art, property, coins).
+  Prices the user records live in `data.db`; the newest date wins, and a manual price wins a tie. Instruments
+  and trades can be edited: a buy's quantity can't drop below what's been sold, dates can't cross the sales
+  they're tied to, and a sale's quantity changes by deleting and re-recording it.
 - **Asset** — an instrument (or a named non-market item, e.g. a house) held in one account. AAPL in a TFSA and
   AAPL in a margin account are two assets. Assets are tracked either by **trades** (self-directed) or by
   **value** (managed portfolios, real estate, art).
@@ -53,6 +59,8 @@ calculated.
   - `sell_after_days` — fires X days after the linked purchase (or after the trigger was created).
   - `pct_change` — fires when price moves up/down X% from a baseline: average cost (default), the linked
     purchase price, or a fixed price (the UI prefills today's price).
+  - `price_target` — fires when the daily close is at or above / at or below a set price ("sell at $5"), in
+    the holding's own currency.
   - `trailing_stop` — fires when the daily close falls X% below the highest close since the purchase (never
     lower than the purchase price). The high-water mark is stored per trigger and holding in `data.db`, so it
     survives the cache being cleared. Daily closes only, stated in the UI.
@@ -65,6 +73,11 @@ calculated.
 - **Balance snapshot** — a dated value for an account. Self-directed accounts are valued as positions × latest
   price + the latest manually entered cash. Months without an update carry the last value forward, flagged
   stale.
+
+## Sign-in
+
+One login passphrase (≥ 12 characters), changeable in Settings; changing it signs out every other device.
+Settings also shows storage: each database's size, table count and total rows, plus any pre-restore copies.
 
 ## Base currency and exchange rates
 

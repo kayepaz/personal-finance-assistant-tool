@@ -19,6 +19,8 @@ const ACCOUNT_KINDS: [string, string][] = [
   ["other_asset", "Other asset"],
   ["other_liability", "Other liability"],
 ];
+const PRICE_SOURCES: [string, string][] = [["auto", "Fetch automatically"], ["manual", "I'll enter prices"]];
+
 const INSTRUMENT_KINDS: [string, string][] = [
   ["equity", "Stock"],
   ["etf", "ETF"],
@@ -373,11 +375,43 @@ function triggerSummary(t: J): string {
     return `Sell ${p.days} days after ${p.from === "purchase" ? "purchase" : "trigger created"}`;
   }
   if (t.type === "trailing_stop") return `Trailing stop: alert when price falls ${p.percent}% below its high`;
+  if (t.type === "price_target") {
+    return `Alert when price is ${p.direction === "at_or_above" ? "at or above" : "at or below"} ${p.price}`;
+  }
   const base = p.baseline === "fixed" ? `fixed price ${p.fixed_price}` : label(p.baseline).toLowerCase();
   return `Alert when price ${p.direction === "up" ? "rises" : "falls"} ${p.percent}% from ${base}`;
 }
 
 function triggerParamFields(type: string, p: J = {}): HTMLElement {
+  if (type === "price_target") {
+    return h(
+      "div",
+      null,
+      field(
+        "When the price is",
+        select(
+          "direction",
+          [["at_or_above", "At or above"], ["at_or_below", "At or below"]],
+          {},
+          p.direction,
+        ),
+      ),
+      field(
+        "Price",
+        input("price", {
+          required: true,
+          pattern: "\\d+(\\.\\d+)?",
+          inputmode: "decimal",
+          value: p.price ?? "",
+        }),
+      ),
+      h(
+        "p",
+        { class: "hint" },
+        "In each holding's own currency, checked against daily closes. Shared across theses, so it suits a single stock best.",
+      ),
+    );
+  }
   if (type === "trailing_stop") {
     return h(
       "div",
@@ -453,6 +487,7 @@ function paramsFrom(type: string, d: Record<string, string>): J {
   if (type === "sell_on_date") return { date: d.date };
   if (type === "sell_after_days") return { days: Number(d.days), from: d.from };
   if (type === "trailing_stop") return { percent: d.percent };
+  if (type === "price_target") return { direction: d.direction, price: d.price };
   return {
     direction: d.direction,
     percent: d.percent,
@@ -902,7 +937,16 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
     field("Name", input("inst_name")),
     field("Type", select("inst_kind", INSTRUMENT_KINDS)),
     field("Currency", input("inst_currency", { value: a.currency, maxlength: 3 })),
-    field("Provider symbol", input("provider_symbol", { placeholder: "defaults to symbol, e.g. SHOP.TO" })),
+    field(
+      "Provider symbol",
+      input("provider_symbol", { placeholder: "defaults to symbol" }),
+      "What the price provider calls it: SHOP.TO for TSX stocks, BTC for bitcoin, XAU for gold, XAG for silver.",
+    ),
+    field(
+      "Prices",
+      select("price_source", PRICE_SOURCES),
+      "Choose “I'll enter prices” for art, property or anything without a market feed.",
+    ),
   );
   instrumentPicker.addEventListener(
     "change",
@@ -1045,6 +1089,7 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
                     kind: d.inst_kind,
                     currency: d.inst_currency,
                     provider_symbol: d.provider_symbol,
+                    price_source: d.price_source,
                   });
                   instrumentId = inst.id;
                 }
@@ -1075,12 +1120,20 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
           onsubmit: onSubmit(nav, (d) =>
             patch(`/accounts/${id}`, {
               name: d.name,
+              kind: d.kind,
               tags: d.tags ? d.tags.split(",").map((s) => s.trim()).filter(Boolean) : [],
               notes: d.notes ?? "",
               update_every_days: d.update_every_days ? Number(d.update_every_days) : null,
             }).then(() => nav.refresh())),
         },
         field("Name", input("name", { value: a.name, required: true })),
+        field(
+          "Type",
+          select("kind", ACCOUNT_KINDS, {}, a.kind),
+          tradeable
+            ? "Changing away from self-directed records today's holdings + cash as the account's value, and its cash history becomes value history."
+            : "Changing to self-directed turns the balance history into cash history; then add the holdings and update the cash.",
+        ),
         field("Tags", input("tags", { value: a.tags.join(", ") })),
         field(
           "Update reminder (days)",
@@ -1098,7 +1151,11 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
 export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
   const a = await get(`/assets/${id}`);
   const trades = a.tracking === "trades";
-  const openBuys = trades ? await get<J[]>(`/assets/${id}/open-buys`) : [];
+  const [openBuys, inst] = await Promise.all([
+    trades ? get<J[]>(`/assets/${id}/open-buys`) : Promise.resolve([] as J[]),
+    a.instrument_id ? get(`/instruments/${a.instrument_id}`) : Promise.resolve(null),
+  ]);
+  a.price_source = inst?.price_source;
   const price = a.latest_price;
 
   const sellForm = h(
@@ -1181,8 +1238,12 @@ export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
             "p",
             { class: "meta" },
             price
-              ? `Last close ${fmtNum(price.close)} on ${price.price_date}`
-              : "No price yet — add a market-data key in Settings.",
+              ? `Last ${price.provider === "manual" ? "price (entered by you)" : "close"} ${
+                fmtNum(price.close)
+              } on ${price.price_date}`
+              : a.price_source === "manual"
+              ? "No price yet — record one below."
+              : "No price yet — add a market-data key in Settings, or record one below.",
           ),
         )
         : null,
@@ -1261,7 +1322,14 @@ export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
                   h("td", { class: "num" }, t.side === "buy" ? fmtNum(t.open_quantity) : ""),
                   h(
                     "td",
-                    null,
+                    { class: "row-actions" },
+                    h("button", {
+                      class: "link",
+                      onclick: () => {
+                        const row = document.getElementById(`edit-${t.id}`);
+                        if (row) row.hidden = !row.hidden;
+                      },
+                    }, "Edit"),
                     h("button", {
                       class: "link danger",
                       onclick: async () => {
@@ -1276,21 +1344,170 @@ export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
                     }, "Delete"),
                   ),
                 )
-              ),
+              ).flatMap((row: HTMLElement, i: number) => [row, tradeEditRow(nav, a.trades[i])]),
             ),
           )
           : empty("No trades yet."),
       )
       : null,
+    inst ? pricesPanel(nav, inst) : null,
+    inst ? instrumentSettings(nav, inst) : null,
+  );
+}
+
+function tradeEditRow(nav: Nav, t: J): HTMLElement {
+  const dec = { pattern: "\\d+(\\.\\d+)?", inputmode: "decimal" };
+  return h(
+    "tr",
+    { id: `edit-${t.id}`, hidden: true, class: "edit-row" },
+    h(
+      "td",
+      { colspan: 6 },
+      h(
+        "form",
+        {
+          class: "row-form",
+          onsubmit: onSubmit(nav, (d) => {
+            const body: J = {
+              trade_date: d.trade_date,
+              price: d.price,
+              fees: d.fees ?? "0",
+              notes: d.notes ?? "",
+            };
+            if (t.side === "buy") body.quantity = d.quantity;
+            return patch(`/trades/${t.id}`, body).then(() => nav.refresh());
+          }),
+        },
+        input("trade_date", { type: "date", required: true, value: t.trade_date, "aria-label": "Date" }),
+        t.side === "buy"
+          ? input("quantity", { ...dec, required: true, value: t.quantity, "aria-label": "Quantity" })
+          : h("span", { class: "meta" }, `${fmtNum(t.quantity)} sold`),
+        input("price", { ...dec, required: true, value: t.price, "aria-label": "Price" }),
+        input("fees", { ...dec, value: t.fees, placeholder: "Fees", "aria-label": "Fees" }),
+        input("notes", { value: t.notes, placeholder: "Notes", "aria-label": "Notes" }),
+        h("button", { type: "submit", class: "primary" }, "Save"),
+      ),
+      t.side === "sell"
+        ? h(
+          "p",
+          { class: "hint" },
+          "To change the quantity or which purchases a sale closed, delete it and record it again.",
+        )
+        : null,
+    ),
+  );
+}
+
+function pricesPanel(nav: Nav, inst: J): HTMLElement {
+  return h(
+    "div",
+    { class: "panel" },
+    h("h2", null, "Record a price"),
+    h(
+      "p",
+      { class: "hint" },
+      inst.price_source === "manual"
+        ? "This instrument has no price feed; the newest price you record is used for its value and triggers."
+        : "Prices are fetched automatically. A price you record here wins if it's for the same or a later date.",
+    ),
+    h(
+      "form",
+      {
+        class: "row-form",
+        onsubmit: onSubmit(nav, (d) => post(`/instruments/${inst.id}/prices`, d).then(() => nav.refresh())),
+      },
+      input("close", {
+        required: true,
+        pattern: "\\d+(\\.\\d+)?",
+        inputmode: "decimal",
+        placeholder: `Price (${inst.currency})`,
+      }),
+      input("price_date", { type: "date", value: todayStr() }),
+      input("note", { placeholder: "Note, e.g. appraisal" }),
+      h("button", { type: "submit" }, "Record"),
+    ),
+    inst.manual_prices.length
+      ? h(
+        "table",
+        null,
+        h("thead", null, h("tr", null, ["Date", "Price", "Note", ""].map((c) => h("th", null, c)))),
+        h(
+          "tbody",
+          null,
+          inst.manual_prices.map((p: J) =>
+            h(
+              "tr",
+              null,
+              h("td", null, p.price_date),
+              h("td", { class: "num" }, fmtNum(p.close)),
+              h("td", null, p.note),
+              h(
+                "td",
+                null,
+                h("button", {
+                  class: "link danger",
+                  onclick: () =>
+                    del(`/instruments/${inst.id}/prices/${p.price_date}`).then(() => nav.refresh()),
+                }, "Delete"),
+              ),
+            )
+          ),
+        ),
+      )
+      : null,
+  );
+}
+
+function instrumentSettings(nav: Nav, inst: J): HTMLElement {
+  return details(
+    "Instrument settings",
+    h(
+      "form",
+      {
+        onsubmit: onSubmit(nav, (d) =>
+          patch(`/instruments/${inst.id}`, {
+            symbol: d.symbol,
+            exchange: d.exchange ?? "",
+            name: d.name ?? "",
+            kind: d.kind,
+            currency: d.currency,
+            provider_symbol: d.provider_symbol ?? "",
+            price_source: d.price_source,
+          }).then(() => {
+            nav.toast("Instrument saved.", "ok");
+            nav.refresh();
+          })),
+      },
+      inst.asset_count > 1
+        ? h("p", { class: "warn" }, `Shared by ${inst.asset_count} assets; changes apply to all of them.`)
+        : null,
+      field("Symbol", input("symbol", { required: true, value: inst.symbol })),
+      field("Exchange", input("exchange", { value: inst.exchange })),
+      field("Name", input("name", { value: inst.name })),
+      field("Type", select("kind", INSTRUMENT_KINDS, {}, inst.kind)),
+      field(
+        "Currency",
+        input("currency", { value: inst.currency, maxlength: 3, required: true }),
+        "Trade prices are recorded in this currency; changing it doesn't convert them.",
+      ),
+      field(
+        "Provider symbol",
+        input("provider_symbol", { value: inst.provider_symbol }),
+        "A new symbol starts a fresh price history.",
+      ),
+      field("Prices", select("price_source", PRICE_SOURCES, {}, inst.price_source)),
+      h("button", { type: "submit", class: "primary" }, "Save"),
+    ),
   );
 }
 
 // ---------------------------------------------------------------- settings
 
 export async function settingsView(nav: Nav, onSignOut: () => void): Promise<HTMLElement> {
-  const [s, sessions, channels] = await Promise.all([
+  const [s, sessions, store, channels] = await Promise.all([
     get("/settings"),
     get<J[]>("/sessions"),
+    get("/storage"),
     get<J[]>("/channels"),
   ]);
   return h(
@@ -1390,6 +1607,7 @@ export async function settingsView(nav: Nav, onSignOut: () => void): Promise<HTM
     ),
     alertsPanel(nav, channels),
     backupPanel(nav, onSignOut),
+    storagePanel(store),
     h(
       "div",
       { class: "panel" },
@@ -1418,6 +1636,7 @@ export async function settingsView(nav: Nav, onSignOut: () => void): Promise<HTM
           onSignOut();
         },
       }, "Sign out"),
+      passphraseForm(nav),
     ),
   );
 }
@@ -1660,6 +1879,7 @@ const TRIGGER_TYPE_OPTIONS: [string, string][] = [
   ["sell_on_date", "Sell on a date"],
   ["sell_after_days", "Sell after N days"],
   ["trailing_stop", "Trailing stop %"],
+  ["price_target", "Price target (sell at $X)"],
 ];
 
 export async function triggersView(nav: Nav): Promise<HTMLElement> {
@@ -2366,6 +2586,85 @@ function backupPanel(nav: Nav, onSignOut: () => void): HTMLElement {
         ),
         h("button", { type: "submit", class: "primary" }, "Restore"),
       ),
+    ),
+  );
+}
+
+// ---------------------------------------------------------------- storage & passphrase
+
+export function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB"];
+  let v = n / 1024, u = 0;
+  while (v >= 1024 && u < units.length - 1) (v /= 1024, u++);
+  return `${v >= 10 ? Math.round(v) : v.toFixed(1)} ${units[u]}`;
+}
+
+function storagePanel(store: J): HTMLElement {
+  const nf = new Intl.NumberFormat();
+  const names: Record<string, string> = { data: "Data", cache: "Cache" };
+  return h(
+    "div",
+    { class: "panel" },
+    h("h2", null, "Storage"),
+    h(
+      "ul",
+      { class: "list" },
+      store.databases.map((d: J) =>
+        h(
+          "li",
+          null,
+          h("strong", null, `${names[d.name]} — ${fmtBytes(d.bytes)}`),
+          ` (${d.tables} tables, ${nf.format(d.rows)} total rows)`,
+        )
+      ),
+      store.pre_restore.count
+        ? h(
+          "li",
+          null,
+          h("strong", null, `Pre-restore copies — ${fmtBytes(store.pre_restore.bytes)}`),
+          ` (${store.pre_restore.count} folder${
+            store.pre_restore.count === 1 ? "" : "s"
+          } next to the database; unencrypted, delete by hand when no longer needed)`,
+        )
+        : null,
+    ),
+    h(
+      "p",
+      { class: "hint" },
+      "Data is everything you've entered. Cache holds prices and exchange rates and can be rebuilt.",
+    ),
+  );
+}
+
+function passphraseForm(nav: Nav): HTMLElement {
+  return details(
+    "Change passphrase",
+    h(
+      "form",
+      {
+        onsubmit: onSubmit(nav, async (d, form) => {
+          if (d.new !== d.confirm) throw new Error("New passphrases don't match");
+          await post("/passphrase", { current: d.current, new: d.new });
+          form.reset();
+          nav.toast("Passphrase changed. Other devices have been signed out.", "ok");
+          nav.refresh();
+        }),
+      },
+      field(
+        "Current passphrase",
+        input("current", { type: "password", required: true, autocomplete: "current-password" }),
+      ),
+      field(
+        "New passphrase",
+        input("new", { type: "password", required: true, minlength: 12, autocomplete: "new-password" }),
+        "At least 12 characters. Other devices will be signed out.",
+      ),
+      field(
+        "Confirm new passphrase",
+        input("confirm", { type: "password", required: true, autocomplete: "new-password" }),
+      ),
+      h("button", { type: "submit", class: "primary" }, "Change passphrase"),
     ),
   );
 }

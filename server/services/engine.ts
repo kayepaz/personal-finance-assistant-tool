@@ -5,11 +5,11 @@ import * as d from "../lib/decimal.ts";
 import { addDays, dateFromMs, today } from "../lib/dates.ts";
 import { averageCost, getTrade, openQty } from "./assets.ts";
 import { createNotification, hasOpenNotification } from "./notifications.ts";
-import { latestPrice, refreshPrices, type RefreshResult } from "./prices.ts";
+import { closesSince, currentPrice, refreshPrices, type RefreshResult } from "./prices.ts";
 import { currenciesInUse, type FxResult, refreshFx } from "./fx.ts";
 import { balanceSheet, recordNetWorth } from "./valuation.ts";
 import { dispatch, type DispatchResult } from "./channels.ts";
-import type { AfterDaysParams, DateParams, PctParams, TrailingParams } from "./triggers.ts";
+import type { AfterDaysParams, DateParams, PctParams, TargetParams, TrailingParams } from "./triggers.ts";
 
 interface Evaluation {
   fire: boolean;
@@ -54,7 +54,7 @@ function evaluate(
     case "pct_change": {
       const p = params as unknown as PctParams;
       if (!link.provider_symbol) return null; // no market price for this asset
-      const price = latestPrice(cache, link.provider_symbol as string);
+      const price = currentPrice(data, cache, link.provider_symbol as string);
       if (!price) return null;
       let baseline: string | undefined;
       if (p.baseline === "fixed") baseline = p.fixed_price;
@@ -84,11 +84,27 @@ function evaluate(
           }${p.percent}% trigger.`,
       };
     }
+    case "price_target": {
+      const p = params as unknown as TargetParams;
+      if (!link.provider_symbol) return null;
+      const price = currentPrice(data, cache, link.provider_symbol as string);
+      if (!price) return null;
+      const above = p.direction === "at_or_above";
+      const cmp = d.cmp(price.close as string, p.price);
+      return {
+        fire: above ? cmp >= 0 : cmp <= 0,
+        observed: { price: price.close, price_date: price.price_date, target: p.price },
+        title: `${link.asset_name} ${above ? "reached" : "fell to"} ${p.price}`,
+        body:
+          `Close ${price.close} on ${price.price_date}. Your thesis "${link.thesis_title}" planned to sell ` +
+          `${above ? "at or above" : "at or below"} ${p.price}.`,
+      };
+    }
     case "trailing_stop": {
       const p = params as unknown as TrailingParams;
       if (!link.provider_symbol) return null;
       const symbol = link.provider_symbol as string;
-      const price = latestPrice(cache, symbol);
+      const price = currentPrice(data, cache, symbol);
       if (!price) return null;
       const mark = updateHighWaterMark(data, cache, trigger, link, price, tz);
       const stop = d.mul(mark.high, d.sub("1", d.div(p.percent, "100", 10)));
@@ -137,9 +153,7 @@ function updateHighWaterMark(
       high = link.buy_price as string;
       highDate = start;
     }
-    const closes = cache.prepare(
-      "SELECT price_date, close FROM daily_prices WHERE provider_symbol = ? AND price_date >= ?",
-    ).all(link.provider_symbol as string, start);
+    const closes = closesSince(data, cache, link.provider_symbol as string, start);
     for (const c of closes) {
       if (!high || d.cmp(c.close as string, high) > 0) {
         high = c.close as string;
@@ -280,17 +294,17 @@ export function queueBalanceUpdates(data: DB, todayStr: string): number {
 }
 
 /** Instruments worth pricing: those held (open quantity) or linked to an active thesis. */
-export function instrumentsToPrice(data: DB): { provider_symbol: string; currency: string }[] {
+export function instrumentsToPrice(data: DB): { provider_symbol: string; currency: string; kind: string }[] {
   return data.prepare(
-    `SELECT DISTINCT i.provider_symbol, i.currency FROM instruments i
+    `SELECT DISTINCT i.provider_symbol, i.currency, i.kind FROM instruments i
      JOIN assets a ON a.instrument_id = i.id
-     WHERE a.archived_at IS NULL AND (
+     WHERE a.archived_at IS NULL AND i.price_source = 'auto' AND (
        EXISTS (SELECT 1 FROM trades b WHERE b.asset_id = a.id AND b.side = 'buy'
                AND CAST(b.quantity AS REAL) > ifnull((SELECT sum(CAST(s.quantity AS REAL)) FROM sale_allocations s WHERE s.buy_trade_id = b.id), 0))
        OR EXISTS (SELECT 1 FROM thesis_links l JOIN theses t ON t.id = l.thesis_id
                   WHERE l.asset_id = a.id AND l.unlinked_at IS NULL AND t.status IN ('active','triggered'))
      )`,
-  ).all() as { provider_symbol: string; currency: string }[];
+  ).all() as { provider_symbol: string; currency: string; kind: string }[];
 }
 
 export interface JobReport {

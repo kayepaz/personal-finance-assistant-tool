@@ -15,13 +15,20 @@ export interface DailyClose {
   close: string;
 }
 
+/** What a provider needs to know about the thing being priced. */
+export interface PriceRequest {
+  symbol: string; // provider symbol, e.g. AAPL, SHOP.TO, BTC, XAU, BINANCE:BTCUSDT
+  kind: string; // instrument kind: equity, etf, fund, crypto, metal, other
+  currency: string; // the instrument's currency (the market to price crypto/metals in)
+}
+
 export interface PriceProvider {
   id: string;
   name: string;
   dailyLimit: number;
   /** What the consent prompt tells the user. */
   consentText: string;
-  fetchLatestClose(symbol: string, apiKey: string, fetchFn: typeof fetch): Promise<DailyClose | null>;
+  fetchLatestClose(req: PriceRequest, apiKey: string, fetchFn: typeof fetch): Promise<DailyClose | null>;
 }
 
 const numToDec = (n: unknown): string | null => {
@@ -36,9 +43,14 @@ export const alphaVantage: PriceProvider = {
   dailyLimit: 25,
   consentText:
     "PFAT will send ticker symbols (for example AAPL) and your Alpha Vantage API key to www.alphavantage.co to fetch daily closing prices. No holdings, quantities or balances are sent.",
-  async fetchLatestClose(symbol, apiKey, fetchFn) {
+  async fetchLatestClose(req, apiKey, fetchFn) {
     const url = new URL("https://www.alphavantage.co/query");
-    url.search = new URLSearchParams({ function: "TIME_SERIES_DAILY", symbol, apikey: apiKey }).toString();
+    const params: Record<string, string> = req.kind === "crypto"
+      ? { function: "DIGITAL_CURRENCY_DAILY", symbol: req.symbol, market: req.currency }
+      : req.kind === "metal"
+      ? { function: "CURRENCY_EXCHANGE_RATE", from_currency: req.symbol, to_currency: req.currency }
+      : { function: "TIME_SERIES_DAILY", symbol: req.symbol };
+    url.search = new URLSearchParams({ ...params, apikey: apiKey }).toString();
     const res = await fetchFn(url);
     if (!res.ok) throw new Error(`Alpha Vantage HTTP ${res.status}`);
     const body = await res.json();
@@ -48,11 +60,23 @@ export const alphaVantage: PriceProvider = {
       throw new Error(msg);
     }
     if (body["Error Message"]) return null; // unknown symbol
-    const series = body["Time Series (Daily)"] as Record<string, Record<string, string>> | undefined;
+    if (req.kind === "metal") {
+      // Spot price per troy ounce, as an exchange rate (e.g. XAU -> USD).
+      const info = body["Realtime Currency Exchange Rate"];
+      const close = numToDec(String(info?.["5. Exchange Rate"] ?? "").trim());
+      const date = String(info?.["6. Last Refreshed"] ?? "").slice(0, 10);
+      return close && isIsoDate(date) ? { date, close } : null;
+    }
+    const series = (body["Time Series (Daily)"] ?? body["Time Series (Digital Currency Daily)"]) as
+      | Record<string, Record<string, string>>
+      | undefined;
     if (!series) return null;
     const latest = Object.keys(series).sort().at(-1);
     if (!latest || !isIsoDate(latest)) return null;
-    const close = numToDec(series[latest]["4. close"]);
+    const day = series[latest];
+    // Crypto responses have used both "4. close" and "4a. close (USD)".
+    const closeKey = Object.keys(day).find((k) => /^4a?\. close/.test(k));
+    const close = closeKey ? numToDec(day[closeKey]) : null;
     return close ? { date: latest, close } : null;
   },
 };
@@ -63,9 +87,11 @@ export const finnhub: PriceProvider = {
   dailyLimit: 1000, // Finnhub limits per minute (60); this cap keeps a runaway loop in check.
   consentText:
     "PFAT will send ticker symbols (for example AAPL) and your Finnhub API key to finnhub.io to fetch latest prices. No holdings, quantities or balances are sent.",
-  async fetchLatestClose(symbol, apiKey, fetchFn) {
+  async fetchLatestClose(req, apiKey, fetchFn) {
+    // Finnhub prices crypto only with exchange-prefixed symbols (e.g. BINANCE:BTCUSDT); it has no metals.
+    if (req.kind === "metal" || (req.kind === "crypto" && !req.symbol.includes(":"))) return null;
     const url = new URL("https://finnhub.io/api/v1/quote");
-    url.search = new URLSearchParams({ symbol, token: apiKey }).toString();
+    url.search = new URLSearchParams({ symbol: req.symbol, token: apiKey }).toString();
     const res = await fetchFn(url);
     if (res.status === 429) throw new QuotaExceeded("Finnhub rate limit");
     if (!res.ok) throw new Error(`Finnhub HTTP ${res.status}`);
@@ -200,7 +226,7 @@ export interface RefreshResult {
 export async function refreshPrices(
   data: DB,
   cache: DB,
-  instruments: { provider_symbol: string; currency: string }[],
+  instruments: { provider_symbol: string; currency: string; kind?: string }[],
   utcDay: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<RefreshResult> {
@@ -233,7 +259,11 @@ export async function refreshPrices(
       }
       try {
         countCall(cache, p.id, utcDay);
-        const close = await p.fetchLatestClose(symbol, getSetting(data, `api_key:${p.id}`)!, fetchFn);
+        const close = await p.fetchLatestClose(
+          { symbol, kind: inst.kind ?? "equity", currency: inst.currency },
+          getSetting(data, `api_key:${p.id}`)!,
+          fetchFn,
+        );
         if (!close) {
           lastError = `${p.name} has no price for ${symbol}`;
           continue;
@@ -269,4 +299,34 @@ export async function refreshPrices(
 
 export function listDeferred(cache: DB): Row[] {
   return cache.prepare("SELECT * FROM deferred_requests ORDER BY first_deferred").all();
+}
+
+// ---------- manual prices & combined lookups ----------
+
+/**
+ * The newest known close for a provider symbol, from fetched prices (cache.db) or prices the user recorded
+ * (data.db). A manual price wins a tie on the same date.
+ */
+export function currentPrice(data: DB, cache: DB, symbol: string): Row | undefined {
+  const fetched = latestPrice(cache, symbol);
+  const manual = data.prepare(
+    `SELECT m.price_date, m.close, 'manual' AS provider FROM manual_prices m
+     JOIN instruments i ON i.id = m.instrument_id WHERE i.provider_symbol = ?
+     ORDER BY m.price_date DESC, m.created_at DESC LIMIT 1`,
+  ).get(symbol) as Row | undefined;
+  if (!manual) return fetched;
+  if (!fetched) return manual;
+  return (manual.price_date as string) >= (fetched.price_date as string) ? manual : fetched;
+}
+
+/** All known closes for a symbol on or after `start`, fetched and manual. */
+export function closesSince(data: DB, cache: DB, symbol: string, start: string): Row[] {
+  const fetched = cache.prepare(
+    "SELECT price_date, close FROM daily_prices WHERE provider_symbol = ? AND price_date >= ?",
+  ).all(symbol, start);
+  const manual = data.prepare(
+    `SELECT m.price_date, m.close FROM manual_prices m JOIN instruments i ON i.id = m.instrument_id
+     WHERE i.provider_symbol = ? AND m.price_date >= ?`,
+  ).all(symbol, start);
+  return [...fetched, ...manual];
 }

@@ -7,7 +7,7 @@ import * as d from "../lib/decimal.ts";
 import { addDays, daysBetween } from "../lib/dates.ts";
 import { latestSnapshot, LIABILITY_KINDS } from "./accounts.ts";
 import { openBuys } from "./assets.ts";
-import { latestPrice } from "./prices.ts";
+import { currentPrice } from "./prices.ts";
 import { convert } from "./fx.ts";
 
 const PRICE_STALE_DAYS = 7;
@@ -63,7 +63,7 @@ function valueSelfDirected(data: DB, cache: DB, a: Row, base: string, todayStr: 
     const qty = d.sum(open.map((b) => b.open_quantity));
     if (d.sign(qty) === 0) continue;
     const cur = asset.currency as string;
-    const p = latestPrice(cache, asset.provider_symbol as string);
+    const p = currentPrice(data, cache, asset.provider_symbol as string);
     let native: string;
     if (p) {
       native = d.mul(qty, p.close as string);

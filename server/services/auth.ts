@@ -96,6 +96,30 @@ export async function login(
   return { token, sessionId: id };
 }
 
+/** Change the login passphrase; every other device is signed out. */
+export async function changePassphrase(
+  db: DB,
+  current: string,
+  next: string,
+  keepSessionId: string,
+  iterations = PBKDF2_ITERATIONS,
+): Promise<void> {
+  if (!(await verifyPassphrase(db, current))) throw new HttpError(401, "Current passphrase is wrong");
+  if (next.length < MIN_PASSPHRASE) {
+    throw badRequest(`Passphrase must be at least ${MIN_PASSPHRASE} characters`);
+  }
+  if (next === current) throw badRequest("The new passphrase is the same as the current one");
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const hash = await pbkdf2(next, salt, iterations);
+  transaction(db, () => {
+    setSetting(db, "passphrase_hash", JSON.stringify({ v: 1, iterations, salt: b64(salt), hash: b64(hash) }));
+    db.prepare("UPDATE sessions SET revoked_at = ? WHERE id <> ? AND revoked_at IS NULL").run(
+      Date.now(),
+      keepSessionId,
+    );
+  });
+}
+
 export async function authenticate(db: DB, token: string | null): Promise<string | null> {
   if (!token) return null;
   const row = db.prepare("SELECT id, last_seen_at FROM sessions WHERE token_hash = ? AND revoked_at IS NULL")

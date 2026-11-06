@@ -6,6 +6,13 @@ All notable changes are documented here. The project follows [Semantic Versionin
 
 ### Added
 
+- Price-target trigger ("sell at $X"), at or above / at or below.
+- Crypto (Alpha Vantage digital currency; Finnhub exchange symbols) and precious-metal (spot rate) prices.
+- Manual prices per instrument, for assets without a feed or to override a fetched price (migration `0006`).
+- Change the login passphrase (signs out other devices).
+- Edit trades and instruments; change an account's type with its balance history carried over.
+- Settings → Storage: size, tables and rows for each database, and pre-restore copies.
+
 - Encrypted backups (data, cache, or both) and restore from Settings; AES-256-GCM with a mandatory passphrase,
   authenticated header, safety copy before restore.
 - Alert channels: ntfy and webhook, each behind its own consent prompt, minimal or full detail, outbox with

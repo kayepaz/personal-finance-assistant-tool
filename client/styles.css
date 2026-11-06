@@ -712,3 +712,15 @@ table.sheet tr.stale td {
 .subfields[hidden] {
   display: none;
 }
+.row-actions {
+  white-space: nowrap;
+}
+.row-actions .link + .link {
+  margin-left: .6rem;
+}
+tr.edit-row td {
+  background: var(--bg);
+}
+tr.edit-row input {
+  min-width: 6rem;
+}

@@ -8,13 +8,23 @@ import { closeFirings } from "./notifications.ts";
 
 type Obj = Record<string, unknown>;
 
-export const TRIGGER_TYPES = ["sell_on_date", "sell_after_days", "pct_change", "trailing_stop"] as const;
+export const TRIGGER_TYPES = [
+  "sell_on_date",
+  "sell_after_days",
+  "pct_change",
+  "trailing_stop",
+  "price_target",
+] as const;
 
 export interface PctParams {
   direction: "up" | "down";
   percent: string;
   baseline: "avg_cost" | "purchase_price" | "fixed";
   fixed_price?: string;
+}
+export interface TargetParams {
+  direction: "at_or_above" | "at_or_below";
+  price: string; // in the instrument's currency
 }
 export interface TrailingParams {
   percent: string;
@@ -52,6 +62,11 @@ export function validateTriggerParams(type: string, p: unknown): Row {
       if (baseline === "fixed") out.fixed_price = v.dec(o, "fixed_price", { positive: true })!;
       return out;
     }
+    case "price_target":
+      return {
+        direction: v.oneOf(o, "direction", ["at_or_above", "at_or_below"] as const)!,
+        price: v.dec(o, "price", { positive: true })!,
+      };
     case "trailing_stop": {
       const percent = v.dec(o, "percent", { positive: true })!;
       if (Number(percent) >= 100) throw badRequest("'percent' must be below 100");

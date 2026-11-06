@@ -263,6 +263,59 @@ function fullySoldTheses(db: DB, buyIds: string[]): Row[] {
   });
 }
 
+/**
+ * Correct a trade. Buys: date, quantity, price, fees, notes — quantity can't drop below what sales have already
+ * closed, and the date can't move after those sales. Sells: date, price, fees, notes — to change a sale's
+ * quantity or which purchases it closed, delete it and record it again.
+ */
+export function updateTrade(db: DB, id: string, body: Obj): Row {
+  const t = getTrade(db, id);
+  return transaction(db, () => {
+    const sets: string[] = [];
+    const vals: string[] = [];
+    const set = (c: string, val: string) => (sets.push(`${c} = ?`), vals.push(val));
+    if (v.has(body, "trade_date")) {
+      const date = v.date(body, "trade_date")!;
+      if (t.side === "buy") {
+        const firstSale = db.prepare(
+          `SELECT min(s.trade_date) AS d FROM sale_allocations a JOIN trades s ON s.id = a.sell_trade_id
+           WHERE a.buy_trade_id = ?`,
+        ).get(id) as Row;
+        if (firstSale.d && date > (firstSale.d as string)) {
+          throw badRequest(
+            `This purchase was partly sold on ${firstSale.d}; its date can't be later than that`,
+          );
+        }
+      } else {
+        const lastBuy = db.prepare(
+          `SELECT max(b.trade_date) AS d FROM sale_allocations a JOIN trades b ON b.id = a.buy_trade_id
+           WHERE a.sell_trade_id = ?`,
+        ).get(id) as Row;
+        if (lastBuy.d && date < (lastBuy.d as string)) {
+          throw badRequest(
+            `This sale closes a purchase from ${lastBuy.d}; its date can't be earlier than that`,
+          );
+        }
+      }
+      set("trade_date", date);
+    }
+    if (v.has(body, "quantity")) {
+      if (t.side === "sell") {
+        throw badRequest("To change how much was sold, delete the sale and record it again");
+      }
+      const qty = v.dec(body, "quantity", { positive: true })!;
+      const sold = allocatedQty(db, id);
+      if (d.cmp(qty, sold) < 0) throw badRequest(`${sold} of this purchase has already been sold`);
+      set("quantity", qty);
+    }
+    if (v.has(body, "price")) set("price", v.dec(body, "price", { nonNegative: true })!);
+    if (v.has(body, "fees")) set("fees", v.dec(body, "fees", { optional: true, nonNegative: true }) ?? "0");
+    if (v.has(body, "notes")) set("notes", v.str(body, "notes", { optional: true, max: 2000 }) ?? "");
+    if (sets.length) db.prepare(`UPDATE trades SET ${sets.join(", ")} WHERE id = ?`).run(...vals, id);
+    return getTrade(db, id);
+  });
+}
+
 export function deleteTrade(db: DB, id: string): void {
   const t = getTrade(db, id);
   transaction(db, () => {

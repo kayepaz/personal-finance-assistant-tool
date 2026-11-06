@@ -14,6 +14,7 @@ import * as triggers from "./services/triggers.ts";
 import * as valuation from "./services/valuation.ts";
 import * as backup from "./services/backup.ts";
 import * as channels from "./services/channels.ts";
+import * as storage from "./services/storage.ts";
 import * as notes from "./services/notifications.ts";
 import * as prices from "./services/prices.ts";
 import { type JobReport, runJobs } from "./services/engine.ts";
@@ -71,6 +72,19 @@ function buildRouter(opts: AppOptions): Router<State> {
     );
     return { token: s.token };
   });
+
+  r.post("/api/passphrase", async (c) => {
+    const b = await c.body();
+    await auth.changePassphrase(
+      data(c),
+      v.reqStr(b, "current", { max: 1000 }),
+      v.reqStr(b, "new", { max: 1000 }),
+      c.state.sessionId!,
+      opts.kdfIterations,
+    );
+  });
+
+  r.get("/api/storage", (c) => storage.storageReport(c.state.dbs));
 
   r.post("/api/logout", (c) => auth.revokeSession(data(c), c.state.sessionId!));
   r.get(
@@ -188,7 +202,17 @@ function buildRouter(opts: AppOptions): Router<State> {
     assets: assets.listAssets(data(c), c.params.id),
     snapshots: accounts.listSnapshots(data(c), c.params.id),
   }));
-  r.patch("/api/accounts/:id", async (c) => accounts.updateAccount(data(c), c.params.id, await c.body()));
+  r.patch("/api/accounts/:id", async (c) => {
+    const b = await c.body();
+    const before = accounts.getAccount(data(c), c.params.id);
+    let currentValue: string | null = null;
+    if (before.kind === "self_directed" && v.has(b, "kind") && b.kind !== "self_directed") {
+      // Capture holdings + cash before the account stops being priced from its holdings.
+      const sheet = valuation.balanceSheet(data(c), cache(c), c.state.today());
+      currentValue = sheet.accounts.find((a) => a.id === c.params.id)?.value_native ?? null;
+    }
+    return accounts.updateAccount(data(c), c.params.id, b, { currentValue, today: c.state.today() });
+  });
   r.post("/api/accounts/:id/snapshots", async (c) => {
     const snap = accounts.addSnapshot(data(c), c.params.id, await c.body(), c.state.today());
     // Recording a balance completes any "update the balance" to-do for this account.
@@ -204,6 +228,19 @@ function buildRouter(opts: AppOptions): Router<State> {
   // ----- instruments -----
   r.get("/api/instruments", (c) => instruments.listInstruments(data(c)));
   r.post("/api/instruments", async (c) => json(instruments.createInstrument(data(c), await c.body()), 201));
+  r.get("/api/instruments/:id", (c) => instruments.instrumentDetail(data(c), c.params.id));
+  r.patch(
+    "/api/instruments/:id",
+    async (c) => instruments.updateInstrument(data(c), c.params.id, await c.body()),
+  );
+  r.post(
+    "/api/instruments/:id/prices",
+    async (c) => json(instruments.addManualPrice(data(c), c.params.id, await c.body(), c.state.today()), 201),
+  );
+  r.delete(
+    "/api/instruments/:id/prices/:date",
+    (c) => instruments.deleteManualPrice(data(c), c.params.id, c.params.date),
+  );
 
   // ----- assets & trades -----
   r.get("/api/assets", (c) => assets.listAssets(data(c), c.url.searchParams.get("account_id") ?? undefined));
@@ -215,7 +252,7 @@ function buildRouter(opts: AppOptions): Router<State> {
       trades: a.tracking === "trades" ? assets.listTrades(data(c), c.params.id) : [],
       links: theses.linksForAsset(data(c), c.params.id),
       latest_price: a.provider_symbol
-        ? prices.latestPrice(cache(c), a.provider_symbol as string) ?? null
+        ? prices.currentPrice(data(c), cache(c), a.provider_symbol as string) ?? null
         : null,
     };
   });
@@ -229,6 +266,7 @@ function buildRouter(opts: AppOptions): Router<State> {
     async (c) => json(assets.recordSell(data(c), c.params.id, await c.body()), 201),
   );
   r.get("/api/assets/:id/open-buys", (c) => assets.openBuys(data(c), c.params.id));
+  r.patch("/api/trades/:id", async (c) => assets.updateTrade(data(c), c.params.id, await c.body()));
   r.delete("/api/trades/:id", (c) => assets.deleteTrade(data(c), c.params.id));
 
   // ----- theses -----
