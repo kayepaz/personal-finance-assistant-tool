@@ -15,6 +15,7 @@ import * as valuation from "./services/valuation.ts";
 import * as backup from "./services/backup.ts";
 import * as channels from "./services/channels.ts";
 import * as storage from "./services/storage.ts";
+import { clearNetworkLog, listNetworkLog, loggedFetch } from "./services/netlog.ts";
 import * as notes from "./services/notifications.ts";
 import * as prices from "./services/prices.ts";
 import { type JobReport, runJobs } from "./services/engine.ts";
@@ -85,6 +86,12 @@ function buildRouter(opts: AppOptions): Router<State> {
   });
 
   r.get("/api/storage", (c) => storage.storageReport(c.state.dbs));
+
+  r.get("/api/network-log", (c) => {
+    const before = Number(c.url.searchParams.get("before") ?? 0) || undefined;
+    return listNetworkLog(cache(c), before, 50);
+  });
+  r.delete("/api/network-log", (c) => clearNetworkLog(cache(c)));
 
   r.post("/api/logout", (c) => auth.revokeSession(data(c), c.state.sessionId!));
   r.get(
@@ -414,6 +421,8 @@ export function createApp(opts: AppOptions): (req: Request) => Promise<Response>
   const router = buildRouter(opts);
   const clientDir = opts.clientDir ?? new URL("../client/", import.meta.url);
   const todayFn = () => today(getSetting(opts.dbs.data, "time_zone"));
+  // Every outbound call goes through the communication log.
+  const outbound = loggedFetch(() => opts.dbs.cache, opts.fetchFn ?? fetch);
 
   return async (req) => {
     const url = new URL(req.url);
@@ -435,7 +444,7 @@ export function createApp(opts: AppOptions): (req: Request) => Promise<Response>
         dbs: opts.dbs,
         sessionId,
         today: todayFn,
-        fetchFn: opts.fetchFn ?? fetch,
+        fetchFn: outbound,
       });
       return res ?? json({ error: "No such endpoint" }, 404);
     } catch (err) {

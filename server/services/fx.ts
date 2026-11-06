@@ -6,6 +6,7 @@
 import { type DB, getSetting, type Row } from "../db/db.ts";
 import * as d from "../lib/decimal.ts";
 import { isIsoDate } from "../lib/dates.ts";
+import { PURPOSE_HEADER } from "./netlog.ts";
 import { BANK_OF_CANADA, countCall, hasConsent, QuotaExceeded, usage } from "./prices.ts";
 
 /** Currencies with a daily Bank of Canada series named FX{CODE}CAD. */
@@ -118,7 +119,9 @@ export async function refreshFx(
     try {
       countCall(cache, BANK_OF_CANADA.id, utcDay);
       const series = bocWanted.map((c) => `FX${c}CAD`).join(",");
-      const res = await fetchFn(`https://www.bankofcanada.ca/valet/observations/${series}/json?recent=5`);
+      const res = await fetchFn(`https://www.bankofcanada.ca/valet/observations/${series}/json?recent=5`, {
+        headers: { [PURPOSE_HEADER]: `Exchange rates · ${bocWanted.join(", ")} · Bank of Canada` },
+      });
       if (!res.ok) throw new Error(`Bank of Canada HTTP ${res.status}`);
       const body = await res.json();
       const obs = Array.isArray(body.observations) ? body.observations as Record<string, unknown>[] : [];
@@ -171,7 +174,9 @@ export async function refreshFx(
         apikey: avKey!,
       })
         .toString();
-      const res = await fetchFn(url);
+      const res = await fetchFn(url, {
+        headers: { [PURPOSE_HEADER]: `Exchange rate · ${c}/${base} · Alpha Vantage` },
+      });
       const body = await res.json();
       if (body.Note || body.Information) throw new QuotaExceeded(String(body.Note ?? body.Information));
       const info = body["Realtime Currency Exchange Rate"];

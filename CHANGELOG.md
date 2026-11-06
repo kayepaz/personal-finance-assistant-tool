@@ -23,6 +23,10 @@ Versions are not tagged yet; the headings below group the work by milestone.
 - Delete accounts and assets from their settings. Anything that must go first (assets; or an asset's trades
   and thesis links) is listed in a collapsed panel; balance and value history are deleted with their owner.
 
+- Settings → Communication log: one row per outbound network call (market data, exchange rates, alerts) with a
+  collapsible view of the exact URL and the request and response headers and bodies. API keys and tokens are
+  masked; the latest 2,000 calls are kept in `cache.db` (cache migration `0002`).
+
 ### Changed
 
 - Account types are now self-directed, managed, real estate, and "Simple asset or liability" (formerly cash).

@@ -809,3 +809,56 @@ details.blockers ul {
 details.blockers li {
   padding: .2rem 0;
 }
+.netlog {
+  display: grid;
+  gap: .3rem;
+}
+details.netlog-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: .35rem .6rem;
+}
+details.netlog-row > summary {
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem .8rem;
+  align-items: center;
+  font-size: .88rem;
+}
+details.netlog-row > summary time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.netlog-purpose {
+  font-weight: 600;
+}
+dl.netlog-detail {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  gap: .4rem .8rem;
+  margin: .6rem 0 .2rem;
+  font-size: .85rem;
+}
+dl.netlog-detail dt {
+  color: var(--muted);
+  font-weight: 600;
+}
+dl.netlog-detail dd {
+  margin: 0;
+  min-width: 0;
+}
+dl.netlog-detail pre.value,
+dl.netlog-detail code.value {
+  font-family: var(--mono);
+  font-size: .8rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+  max-height: 24rem;
+  overflow: auto;
+  background: var(--bg);
+  padding: .4rem .5rem;
+  border-radius: 6px;
+  display: block;
+}

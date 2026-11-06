@@ -24,6 +24,8 @@ calculated.
 - Anything that leaves the server (market-data lookups, webhooks, ntfy, email) requires an explicit consent
   prompt that says what is sent and where. Consent is stored and revocable.
 - Market-data requests send only ticker symbols, never holdings or quantities.
+- Every outbound call is recorded in the communication log (Settings), with the exact URL, headers and bodies
+  sent and received; API keys and tokens are masked before storing.
 
 ## Domain
 

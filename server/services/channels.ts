@@ -8,6 +8,7 @@ import { uuidv7 } from "../lib/ids.ts";
 import { badRequest, notFound } from "../lib/http.ts";
 import * as v from "../lib/validate.ts";
 import { hasConsent, setConsent } from "./prices.ts";
+import { PURPOSE_HEADER } from "./netlog.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -216,6 +217,7 @@ async function hmacHex(secret: string, text: string): Promise<string> {
 }
 
 async function send(channel: Row, msg: Message, fetchFn: typeof fetch): Promise<void> {
+  const purpose = `Alert${msg.id === "test" ? " test" : ""} · ${channel.name}`;
   const config = JSON.parse(channel.config as string);
   const full = channel.detail === "full";
   const title = full ? msg.title : "PFAT";
@@ -224,7 +226,11 @@ async function send(channel: Row, msg: Message, fetchFn: typeof fetch): Promise<
   let res: Response;
   if (channel.kind === "ntfy") {
     const c = config as NtfyConfig;
-    const headers: Record<string, string> = { Title: encodeHeader(title), Tags: "chart_with_upwards_trend" };
+    const headers: Record<string, string> = {
+      Title: encodeHeader(title),
+      Tags: "chart_with_upwards_trend",
+      [PURPOSE_HEADER]: purpose,
+    };
     if (c.priority) headers.Priority = String(c.priority);
     if (c.token) headers.Authorization = `Bearer ${c.token}`;
     res = await fetchFn(`${c.server}/${c.topic}`, { method: "POST", headers, body: text, signal });
@@ -237,7 +243,7 @@ async function send(channel: Row, msg: Message, fetchFn: typeof fetch): Promise<
         ? { id: msg.id, kind: msg.kind, title: msg.title, body: msg.body, created_at: msg.created_at }
         : { id: msg.id, kind: msg.kind, created_at: msg.created_at },
     });
-    const headers: Record<string, string> = { "content-type": "application/json" };
+    const headers: Record<string, string> = { "content-type": "application/json", [PURPOSE_HEADER]: purpose };
     if (c.secret) headers["X-PFAT-Signature"] = `sha256=${await hmacHex(c.secret, payload)}`;
     res = await fetchFn(c.url, { method: "POST", headers, body: payload, signal });
   }

@@ -7,6 +7,7 @@ import { uuidv7 } from "../lib/ids.ts";
 import { isDecimal } from "../lib/decimal.ts";
 import { isIsoDate } from "../lib/dates.ts";
 import { badRequest } from "../lib/http.ts";
+import { PURPOSE_HEADER } from "./netlog.ts";
 
 export class QuotaExceeded extends Error {}
 
@@ -51,7 +52,9 @@ export const alphaVantage: PriceProvider = {
       ? { function: "CURRENCY_EXCHANGE_RATE", from_currency: req.symbol, to_currency: req.currency }
       : { function: "TIME_SERIES_DAILY", symbol: req.symbol };
     url.search = new URLSearchParams({ ...params, apikey: apiKey }).toString();
-    const res = await fetchFn(url);
+    const res = await fetchFn(url, {
+      headers: { [PURPOSE_HEADER]: `Price · ${req.symbol} · Alpha Vantage` },
+    });
     if (!res.ok) throw new Error(`Alpha Vantage HTTP ${res.status}`);
     const body = await res.json();
     if (body.Note || body.Information) {
@@ -92,7 +95,7 @@ export const finnhub: PriceProvider = {
     if (req.kind === "metal" || (req.kind === "crypto" && !req.symbol.includes(":"))) return null;
     const url = new URL("https://finnhub.io/api/v1/quote");
     url.search = new URLSearchParams({ symbol: req.symbol, token: apiKey }).toString();
-    const res = await fetchFn(url);
+    const res = await fetchFn(url, { headers: { [PURPOSE_HEADER]: `Price · ${req.symbol} · Finnhub` } });
     if (res.status === 429) throw new QuotaExceeded("Finnhub rate limit");
     if (!res.ok) throw new Error(`Finnhub HTTP ${res.status}`);
     const body = await res.json();

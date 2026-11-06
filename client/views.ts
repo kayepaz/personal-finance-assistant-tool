@@ -1884,11 +1884,12 @@ function instrumentSettings(nav: Nav, inst: J): HTMLElement {
 // ---------------------------------------------------------------- settings
 
 export async function settingsView(nav: Nav, onSignOut: () => void): Promise<HTMLElement> {
-  const [s, sessions, store, channels] = await Promise.all([
+  const [s, sessions, store, channels, netlog] = await Promise.all([
     get("/settings"),
     get<J[]>("/sessions"),
     get("/storage"),
     get<J[]>("/channels"),
+    get<J[]>("/network-log"),
   ]);
   return h(
     "section",
@@ -1988,6 +1989,7 @@ export async function settingsView(nav: Nav, onSignOut: () => void): Promise<HTM
     alertsPanel(nav, channels),
     backupPanel(nav, onSignOut),
     storagePanel(store),
+    communicationLog(nav, netlog),
     h(
       "div",
       { class: "panel" },
@@ -3119,5 +3121,114 @@ function historyEntries(history: J[], showSubject: boolean): HTMLElement {
           : null,
       );
     }),
+  );
+}
+
+// ---------------------------------------------------------------- communication log
+
+function pretty(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
+}
+
+function kv(obj: Record<string, string>): HTMLElement {
+  const keys = Object.keys(obj);
+  return keys.length
+    ? h("pre", { class: "value" }, keys.map((k) => `${k}: ${obj[k]}`).join("\n"))
+    : h("span", { class: "meta" }, "(none)");
+}
+
+function netlogEntry(r: J): HTMLElement {
+  const ok = r.status !== null && r.status < 400;
+  return h(
+    "details",
+    { class: "netlog-row" },
+    h(
+      "summary",
+      null,
+      h("time", null, new Date(r.started_at).toLocaleString()),
+      h("span", { class: "netlog-purpose" }, r.purpose),
+      h("span", { class: "meta" }, `${r.method} ${new URL(r.url).host}`),
+      h(
+        "span",
+        { class: `badge ${ok ? "badge-active" : "badge-abandoned"}` },
+        r.status === null ? "failed" : String(r.status),
+      ),
+      h("span", { class: "meta" }, `${r.duration_ms} ms`),
+    ),
+    h(
+      "dl",
+      { class: "netlog-detail" },
+      h("dt", null, "URL"),
+      h("dd", null, h("code", { class: "value" }, r.url)),
+      h("dt", null, "Request headers"),
+      h("dd", null, kv(r.request_headers)),
+      h("dt", null, "Request body"),
+      h(
+        "dd",
+        null,
+        r.request_body
+          ? h("pre", { class: "value" }, pretty(r.request_body))
+          : h("span", { class: "meta" }, "(none)"),
+      ),
+      r.error ? [h("dt", null, "Error"), h("dd", { class: "danger" }, r.error)] : null,
+      r.status !== null ? [h("dt", null, "Response status"), h("dd", null, String(r.status))] : null,
+      r.status !== null ? [h("dt", null, "Response headers"), h("dd", null, kv(r.response_headers))] : null,
+      r.status !== null
+        ? [
+          h("dt", null, "Response body"),
+          h(
+            "dd",
+            null,
+            r.response_body
+              ? h("pre", { class: "value" }, pretty(r.response_body))
+              : h("span", { class: "meta" }, "(empty)"),
+          ),
+        ]
+        : null,
+    ),
+  );
+}
+
+function communicationLog(nav: Nav, first: J[]): HTMLElement {
+  const list = h("div", { class: "netlog" }, first.map(netlogEntry));
+  let oldest = first.at(-1)?.started_at as number | undefined;
+  const more = h("button", {
+    hidden: first.length < 50,
+    onclick: async () => {
+      const next = await get<J[]>(`/network-log?before=${oldest}`);
+      next.forEach((r) => list.appendChild(netlogEntry(r)));
+      oldest = next.at(-1)?.started_at ?? oldest;
+      if (next.length < 50) more.hidden = true;
+    },
+  }, "Show older");
+  return h(
+    "div",
+    { class: "panel" },
+    h("h2", null, "Communication log"),
+    h(
+      "p",
+      { class: "hint" },
+      "Every network call this server makes: market data, exchange rates and alerts. Open a row for the exact URL and what was sent and received. API keys and tokens are masked. The latest 2,000 calls are kept.",
+    ),
+    first.length ? list : empty("No outbound calls yet."),
+    h(
+      "div",
+      { class: "actions" },
+      more,
+      first.length
+        ? h("button", {
+          class: "link danger",
+          onclick: async () => {
+            if (!confirm("Clear the communication log?")) return;
+            await del("/network-log");
+            nav.refresh();
+          },
+        }, "Clear log")
+        : null,
+    ),
   );
 }
