@@ -7,6 +7,9 @@ explicit permission.
 PFAT is not a ledger: balances are approximate, and taxes, fees and jurisdiction rules are noted, never
 calculated.
 
+**Why the local data philosophy? Isn't it easier to use cloud-based services?** See
+[Why local data?](VISION.md#why-local-data) in the vision.
+
 ## Status
 
 Pre-alpha (v0.1 in progress). See [docs/SPEC.md](docs/SPEC.md) and [docs/DATA_MODEL.md](docs/DATA_MODEL.md).
