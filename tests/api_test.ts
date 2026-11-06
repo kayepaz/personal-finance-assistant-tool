@@ -397,13 +397,9 @@ Deno.test("reports: balance sheet in base currency, net worth history, allocatio
     name: "12 Main St",
     value: "800000",
   });
-  const mortgage = await ok("POST", "/api/accounts", {
-    name: "Mortgage",
-    kind: "line_of_credit",
-    linked_account_id: house.id,
-  });
-  await ok("POST", `/api/accounts/${mortgage.id}/snapshots`, { amount: "300000" });
-  await ok("POST", "/api/accounts", { name: "Empty card", kind: "credit_card" }); // no balance yet
+  const loan = await ok("POST", "/api/accounts", { name: "Car loan", kind: "cash" });
+  await ok("POST", `/api/accounts/${loan.id}/snapshots`, { amount: "-300000" }); // negative = liability
+  await ok("POST", "/api/accounts", { name: "Empty card", kind: "cash" }); // no balance yet
 
   const a = await ok("POST", "/api/theses", { title: "AI", status: "active" });
   const b = await ok("POST", "/api/theses", { title: "Growth", status: "active" });
@@ -416,6 +412,8 @@ Deno.test("reports: balance sheet in base currency, net worth history, allocatio
   assert.equal(bs.base_currency, "CAD");
   assert.equal(bs.accounts.find((x: J) => x.name === "TFSA").value_base, "2180");
   assert.deepEqual(bs.totals, { assets: "802180", liabilities: "300000", net_worth: "502180" });
+  const loanRow = bs.accounts.find((x: J) => x.name === "Car loan");
+  assert.deepEqual([loanRow.is_liability, loanRow.value_base], [true, "300000"]);
   assert.ok(bs.warnings.some((w: string) => w.includes("Empty card")));
 
   assert.equal(r.net_worth.length, 1);

@@ -3,17 +3,8 @@ import { uuidv7 } from "../lib/ids.ts";
 import { badRequest, conflict, HttpError, notFound } from "../lib/http.ts";
 import * as v from "../lib/validate.ts";
 
-export const ACCOUNT_KINDS = [
-  "self_directed",
-  "managed",
-  "real_estate",
-  "cash",
-  "credit_card",
-  "line_of_credit",
-  "other_asset",
-  "other_liability",
-] as const;
-export const LIABILITY_KINDS = new Set(["credit_card", "line_of_credit", "other_liability"]);
+/** 'cash' is shown as "Simple asset or liability": one balance, positive = asset, negative = liability. */
+export const ACCOUNT_KINDS = ["self_directed", "managed", "real_estate", "cash"] as const;
 
 type Obj = Record<string, unknown>;
 
@@ -22,7 +13,6 @@ function present(r: Row): Row {
     ...r,
     tags: JSON.parse(r.tags as string),
     auto_update: r.auto_update === 1,
-    is_liability: LIABILITY_KINDS.has(r.kind as string),
   };
 }
 
@@ -96,7 +86,9 @@ export function updateAccount(db: DB, id: string, body: Obj, change?: KindChange
     );
   }
   if (newKind === "cash" && current.kind !== "cash" && assetCount) {
-    throw conflict("Cash accounts don't hold assets; move or remove this account's assets first");
+    throw conflict(
+      "Simple asset or liability accounts don't hold assets; move or remove this account's assets first",
+    );
   }
   const intoRealEstate = current.kind !== "real_estate" && newKind === "real_estate";
   const sets: string[] = [];

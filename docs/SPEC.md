@@ -27,10 +27,10 @@ calculated.
 
 ## Domain
 
-- **Account** — a container with a kind: self-directed, managed portfolio, real estate, cash, credit card,
-  line of credit, other. Has a currency, optional tags (TFSA, RRSP, non-registered…), free-text jurisdiction
-  notes, and a "remind me to update every X days" setting. Liabilities are accounts whose kind is a liability.
-  A mortgage (line of credit / other liability) may link to a property account.
+- **Account** — a container with one of four types: self-directed trading, managed portfolio, real estate, or
+  simple asset or liability (internal kind `cash`). Has a currency, optional tags (TFSA, RRSP,
+  non-registered…), free-text jurisdiction notes, and a "remind me to update every X days" setting. Any
+  account whose value is negative is reported as a liability (shown as a positive amount owed).
 - **Instrument** — something with a price (ticker + exchange + currency + provider symbol). Its price source
   is _automatic_ (stocks and ETFs via `TIME_SERIES_DAILY`/Finnhub quote; crypto via Alpha Vantage
   `DIGITAL_CURRENCY_DAILY` in the instrument's currency, or Finnhub with an exchange symbol like
@@ -38,7 +38,8 @@ calculated.
   Prices the user records live in `data.db`; the newest date wins, and a manual price wins a tie. Instruments
   and trades can be edited: a buy's quantity can't drop below what's been sold, dates can't cross the sales
   they're tied to, and a sale's quantity changes by deleting and re-recording it.
-- **Cash account** — a single balance with a dated history; no assets.
+- **Simple asset or liability** — a single balance with a dated history and no assets: positive for something
+  owned (savings, a car), negative for something owed (a credit card, a loan).
 - **Deleting** — an account can be deleted once it holds no assets (its balance history goes with it); an
   asset once it has no trades and no active thesis links (its value history and past links go with it; thesis
   history keeps the revision records). The UI lists whatever must be removed first.

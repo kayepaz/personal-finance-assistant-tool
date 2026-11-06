@@ -123,7 +123,7 @@ Deno.test("real estate: houses and mortgages only, valued as their sum, no cash"
 
 Deno.test("real estate: switching an account to real estate moves its balances onto a house", async () => {
   const { ok } = await setup();
-  const a = await ok("POST", "/api/accounts", { name: "Cabin", kind: "other_asset" });
+  const a = await ok("POST", "/api/accounts", { name: "Cabin", kind: "cash" });
   await ok("POST", `/api/accounts/${a.id}/snapshots`, { amount: "300000", as_of: "2026-01-01" });
   await ok("PATCH", `/api/accounts/${a.id}`, { kind: "real_estate" });
   const acct = await ok("GET", `/api/accounts/${a.id}`);

@@ -5,7 +5,7 @@
 import { type DB, getSetting, type Row } from "../db/db.ts";
 import * as d from "../lib/decimal.ts";
 import { addDays, daysBetween } from "../lib/dates.ts";
-import { latestSnapshot, LIABILITY_KINDS } from "./accounts.ts";
+import { latestSnapshot } from "./accounts.ts";
 import { latestAssetValue, openBuys } from "./assets.ts";
 import { currentPrice } from "./prices.ts";
 import { convert } from "./fx.ts";
@@ -166,8 +166,7 @@ function valueBySnapshot(data: DB, cache: DB, a: Row, base: string, todayStr: st
     out.warnings.push("No balance recorded yet");
     return out;
   }
-  let amount = snap.amount as string;
-  if (out.is_liability) amount = amount.replace(/^-/, ""); // amounts owed are stored and shown as positive
+  const amount = snap.amount as string;
   out.value_native = r2(amount);
   out.as_of = snap.as_of as string;
   const inBase = convert(cache, amount, out.currency, base);
@@ -183,7 +182,7 @@ function blank(a: Row): AccountValue {
     name: a.name as string,
     kind: a.kind as string,
     tags: JSON.parse(a.tags as string),
-    is_liability: LIABILITY_KINDS.has(a.kind as string),
+    is_liability: false, // set from the value's sign once valued
     currency: a.currency as string,
     value_native: null,
     value_base: null,
@@ -217,6 +216,13 @@ export function balanceSheet(data: DB, cache: DB, todayStr: string): BalanceShee
   let assets = "0", liabilities = "0";
   const warnings: string[] = [];
   for (const v of values) {
+    // Any account worth less than nothing is a liability: a simple account with a negative balance (a card, a
+    // loan), or an underwater property. It is listed under liabilities as a positive amount owed.
+    if (v.value_base !== null && d.sign(v.value_base) < 0) {
+      v.is_liability = true;
+      v.value_base = d.mul(v.value_base, "-1");
+      if (v.value_native !== null) v.value_native = d.mul(v.value_native, "-1");
+    }
     if (v.value_base === null) {
       warnings.push(`${v.name} is not included in the totals: ${v.warnings.at(-1) ?? "no value"}`);
       continue;

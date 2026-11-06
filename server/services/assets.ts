@@ -63,7 +63,7 @@ export function createAsset(db: DB, body: Obj, todayStr?: string): Row {
   }
   if (body.category) throw badRequest("Only real estate accounts have houses and mortgages");
   if (account.kind === "cash") {
-    throw badRequest("Cash accounts just record a balance; they don't hold assets");
+    throw badRequest("Simple asset or liability accounts just record a balance; they don't hold assets");
   }
 
   const instrumentId = v.str(body, "instrument_id", { optional: true }) || undefined;

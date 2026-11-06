@@ -25,7 +25,11 @@ Versions are not tagged yet; the headings below group the work by milestone.
 
 ### Changed
 
-- Cash accounts are a simple balance: they no longer hold assets.
+- Account types are now self-directed, managed, real estate, and "Simple asset or liability" (formerly cash).
+  A simple account is a liability when its balance is negative. Credit card, line of credit / mortgage, other
+  asset and other liability accounts become simple accounts, with liability balances made negative (migration
+  `0008`).
+- Simple accounts are just a balance: they no longer hold assets.
 - Sign out moved from Settings to the top-right of the main menu.
 
 ### Fixed

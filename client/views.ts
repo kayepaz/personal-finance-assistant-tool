@@ -13,11 +13,7 @@ const ACCOUNT_KINDS: [string, string][] = [
   ["self_directed", "Self-directed trading"],
   ["managed", "Managed portfolio"],
   ["real_estate", "Real estate"],
-  ["cash", "Cash"],
-  ["credit_card", "Credit card"],
-  ["line_of_credit", "Line of credit / mortgage"],
-  ["other_asset", "Other asset"],
-  ["other_liability", "Other liability"],
+  ["cash", "Simple asset or liability"],
 ];
 const PRICE_SOURCES: [string, string][] = [["auto", "Fetch automatically"], ["manual", "I'll enter prices"]];
 
@@ -872,7 +868,11 @@ export async function accountsView(nav: Nav): Promise<HTMLElement> {
           }),
         },
         field("Name", input("name", { required: true, placeholder: "e.g. Questrade TFSA" })),
-        field("Type", select("kind", ACCOUNT_KINDS)),
+        field(
+          "Type",
+          select("kind", ACCOUNT_KINDS),
+          "Simple asset or liability: one balance — positive if you own it, negative if you owe it.",
+        ),
         field("Currency", input("currency", { value: settings.base_currency, maxlength: 3, required: true })),
         field("Tags", input("tags", { placeholder: "TFSA, RRSP, non-registered…" }), "Comma separated."),
         field(
@@ -976,7 +976,14 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
       h(
         "div",
         { class: "panel" },
-        h("h2", null, a.is_liability ? "Balance owed" : tradeable ? "Cash" : "Value"),
+        h("h2", null, tradeable ? "Cash" : a.kind === "cash" ? "Balance" : "Value"),
+        a.kind === "cash"
+          ? h(
+            "p",
+            { class: "hint" },
+            "Positive for something you own (savings, a car). Negative for something you owe (a credit card, a loan) — it then counts as a liability.",
+          )
+          : null,
         h("p", { class: "big" }, fmtNum((tradeable ? lastCash : lastValue)?.amount, 2), " ", a.currency),
         h(
           "p",
@@ -1053,9 +1060,13 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
       a.kind === "cash" && !a.assets.length ? null : h(
         "div",
         { class: "panel" },
-        h("h2", null, a.kind === "cash" ? "Assets (not used for cash accounts)" : "Assets"),
+        h("h2", null, a.kind === "cash" ? "Assets (not used in simple accounts)" : "Assets"),
         a.kind === "cash"
-          ? h("p", { class: "hint" }, "Cash accounts just record a balance. Delete these assets to tidy up.")
+          ? h(
+            "p",
+            { class: "hint" },
+            "Simple accounts just record a balance. Delete these assets to tidy up.",
+          )
           : null,
         a.assets.length
           ? h(

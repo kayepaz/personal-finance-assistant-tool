@@ -1,6 +1,6 @@
 /** Deleting accounts and assets, and cash accounts without assets. */
 import assert from "node:assert/strict";
-import { openInMemory } from "../server/db/db.ts";
+import { migrate, openDatabase, openInMemory } from "../server/db/db.ts";
 import { createApp } from "../server/app.ts";
 import { resetLoginBrake } from "../server/services/auth.ts";
 
@@ -45,17 +45,17 @@ Deno.test("cash accounts record a balance and hold no assets", async () => {
   const cash = await ok("POST", "/api/accounts", { name: "Chequing", kind: "cash" });
   assert.equal((await call("POST", "/api/assets", { account_id: cash.id, name: "Something" })).status, 400);
   await ok("POST", `/api/accounts/${cash.id}/snapshots`, { amount: "8400" });
-  const other = await ok("POST", "/api/accounts", { name: "Misc", kind: "other_asset" });
+  const other = await ok("POST", "/api/accounts", { name: "Misc", kind: "managed" });
   await ok("POST", "/api/assets", { account_id: other.id, name: "Watch" });
   assert.equal((await call("PATCH", `/api/accounts/${other.id}`, { kind: "cash" })).status, 409);
 });
 
 Deno.test("an account with no assets deletes with its balance history", async () => {
   const { dbs, ok, call } = await setup();
-  const house = await ok("POST", "/api/accounts", { name: "House", kind: "other_asset" });
+  const house = await ok("POST", "/api/accounts", { name: "House", kind: "cash" });
   const visa = await ok("POST", "/api/accounts", {
     name: "Card",
-    kind: "credit_card",
+    kind: "cash",
     linked_account_id: house.id,
   });
   await ok("POST", `/api/accounts/${house.id}/snapshots`, { amount: "100" });
@@ -120,4 +120,25 @@ Deno.test("a house deletes with its value history", async () => {
   await ok("DELETE", `/api/assets/${house.id}`);
   assert.equal((dbs.data.prepare("SELECT count(*) AS n FROM asset_values").get() as J).n, 0);
   await ok("DELETE", `/api/accounts/${re.id}`);
+});
+
+Deno.test("migration 0008: old account types become simple accounts; liabilities turn negative", () => {
+  const db = openDatabase(":memory:");
+  db.exec("PRAGMA foreign_keys = OFF");
+  const dir = new URL("../server/db/migrations/data/", import.meta.url);
+  const files = [...Deno.readDirSync(dir)].map((e) => e.name).filter((n) => n < "0008").sort();
+  for (const f of files) db.exec(Deno.readTextFileSync(new URL(f, dir)));
+  db.exec(`PRAGMA user_version = ${files.length}; PRAGMA foreign_keys = ON;`);
+  db.exec(`
+    INSERT INTO accounts(id, name, kind, currency, created_at, updated_at) VALUES
+      ('a1','Visa','credit_card','CAD',1,1), ('a2','Car','other_asset','CAD',1,1), ('a3','LOC','line_of_credit','CAD',1,1);
+    INSERT INTO account_snapshots VALUES
+      ('s1','a1','2026-06-01','value','1830.45','manual','',1), ('s2','a2','2026-06-01','value','12000','manual','',2),
+      ('s3','a3','2026-06-01','value','0','manual','',3);
+  `);
+  migrate(db, "data");
+  const kinds = db.prepare("SELECT kind FROM accounts ORDER BY id").all().map((r) => r.kind);
+  assert.deepEqual(kinds, ["cash", "cash", "cash"]);
+  const amounts = db.prepare("SELECT amount FROM account_snapshots ORDER BY id").all().map((r) => r.amount);
+  assert.deepEqual(amounts, ["-1830.45", "12000", "0"]);
 });
