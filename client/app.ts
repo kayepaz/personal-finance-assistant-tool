@@ -1,5 +1,5 @@
 /** PFAT client shell: routing, navigation, toasts. */
-import { get, handleUnauthorized } from "./api.ts";
+import { get, handleUnauthorized, post, setToken } from "./api.ts";
 import { h, mount } from "./dom.ts";
 import * as views from "./views.ts";
 
@@ -66,6 +66,15 @@ function shell(content: HTMLElement): HTMLElement {
           path === "/" && todoCount ? h("span", { class: "count" }, String(todoCount)) : null,
         )
       ),
+      h("button", {
+        class: "signout",
+        title: "Sign out of this device",
+        onclick: async () => {
+          await post("/logout").catch(() => {});
+          setToken(null);
+          nav.go("/");
+        },
+      }, "Sign out"),
     ),
     h("main", null, content),
   );

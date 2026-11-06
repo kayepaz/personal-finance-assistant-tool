@@ -6,6 +6,13 @@ All notable changes are documented here. The project follows [Semantic Versionin
 
 ### Added
 
+- History entries show what changed: a collapsed table of each field's before and after values (or the initial
+  values on create), and thesis history names the claim, trigger or holding involved.
+
+### Changed
+
+- Sign out moved from Settings to the top-right of the main menu.
+
 - Price-target trigger ("sell at $X"), at or above / at or below.
 - Crypto (Alpha Vantage digital currency; Finnhub exchange symbols) and precious-metal (spot rate) prices.
 - Manual prices per instrument, for assets without a feed or to override a fetched price (migration `0006`).

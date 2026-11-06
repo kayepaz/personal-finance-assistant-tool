@@ -800,19 +800,7 @@ export async function thesisView(nav: Nav, id: string): Promise<HTMLElement> {
   // --- history
   const historyPanel = details(
     `History (${history.length} change${history.length === 1 ? "" : "s"})`,
-    h(
-      "ol",
-      { class: "history" },
-      history.map((r) =>
-        h(
-          "li",
-          null,
-          h("time", null, new Date(r.created_at).toLocaleString()),
-          ` ${label(r.entity_type)} ${r.action}`,
-          r.note ? h("em", null, ` — ${r.note}`) : null,
-        )
-      ),
-    ),
+    historyEntries(history, true),
   );
 
   return h(
@@ -1629,13 +1617,6 @@ export async function settingsView(nav: Nav, onSignOut: () => void): Promise<HTM
           )
         ),
       ),
-      h("button", {
-        onclick: async () => {
-          await post("/logout").catch(() => {});
-          setToken(null);
-          onSignOut();
-        },
-      }, "Sign out"),
       passphraseForm(nav),
     ),
   );
@@ -1669,19 +1650,7 @@ function usedByPanel(nav: Nav, theses: J[], what: string): HTMLElement {
 function historyList(history: J[]): HTMLElement {
   return details(
     `History (${history.length} change${history.length === 1 ? "" : "s"})`,
-    h(
-      "ol",
-      { class: "history" },
-      history.map((r) =>
-        h(
-          "li",
-          null,
-          h("time", null, new Date(r.created_at).toLocaleString()),
-          ` ${label(r.action)}`,
-          r.note ? h("em", null, ` — ${r.note}`) : null,
-        )
-      ),
-    ),
+    historyEntries(history, false),
   );
 }
 
@@ -2666,5 +2635,82 @@ function passphraseForm(nav: Nav): HTMLElement {
       ),
       h("button", { type: "submit", class: "primary" }, "Change passphrase"),
     ),
+  );
+}
+
+// ---------------------------------------------------------------- history entries
+
+const ENTITY_LABEL: Record<string, string> = {
+  thesis: "Thesis",
+  thesis_link: "Holding link",
+  claim: "Claim",
+  trigger: "Trigger",
+  thesis_claim: "Claim on this thesis",
+  thesis_trigger: "Trigger on this thesis",
+};
+
+function fmtValue(field: string, value: unknown): Node | string {
+  if (value === undefined) return "—";
+  if (value === null || value === "") return h("span", { class: "meta" }, "(empty)");
+  if (field.endsWith("_at") && typeof value === "number") return new Date(value).toLocaleString();
+  if (typeof value === "object") return h("pre", { class: "value" }, JSON.stringify(value, null, 2));
+  return h("span", { class: "value" }, String(value));
+}
+
+/** One line per change (date, what changed, note), each with a collapsed table of the fields it changed. */
+function historyEntries(history: J[], showSubject: boolean): HTMLElement {
+  return h(
+    "ol",
+    { class: "history" },
+    history.map((r) => {
+      const changes = (r.changes ?? []) as J[];
+      const created = changes.every((c) => c.before === undefined);
+      return h(
+        "li",
+        null,
+        h("time", null, new Date(r.created_at).toLocaleString()),
+        showSubject
+          ? ` ${ENTITY_LABEL[r.entity_type] ?? label(r.entity_type)} ${r.action}`
+          : ` ${label(r.action)}`,
+        showSubject && r.subject ? h("strong", null, ` “${r.subject}”`) : null,
+        r.note ? h("em", null, ` — ${r.note}`) : null,
+        changes.length
+          ? h(
+            "details",
+            { class: "changes" },
+            h("summary", null, `${changes.length} field${changes.length === 1 ? "" : "s"}`),
+            h(
+              "table",
+              null,
+              h(
+                "thead",
+                null,
+                h(
+                  "tr",
+                  null,
+                  h("th", null, "Field"),
+                  created ? h("th", null, "Value") : [h("th", null, "Before"), h("th", null, "After")],
+                ),
+              ),
+              h(
+                "tbody",
+                null,
+                changes.map((c) =>
+                  h(
+                    "tr",
+                    null,
+                    h("td", null, label(c.field)),
+                    created ? h("td", null, fmtValue(c.field, c.after)) : [
+                      h("td", null, fmtValue(c.field, c.before)),
+                      h("td", null, fmtValue(c.field, c.after)),
+                    ],
+                  )
+                ),
+              ),
+            ),
+          )
+          : null,
+      );
+    }),
   );
 }

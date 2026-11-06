@@ -206,8 +206,42 @@ export function addReasoning(db: DB, thesisId: string, body: Obj): Row {
 /** Everything that changed on this thesis, plus edits to the claims and triggers it has ever used. */
 export function thesisHistory(db: DB, thesisId: string): Row[] {
   const out: Row[] = [];
+  const name = (sql: string, id: unknown) => {
+    const r = id ? db.prepare(sql).get(id as string) as Row | undefined : undefined;
+    return r ? String(Object.values(r)[0] ?? "") : "";
+  };
+  const claimName = (id: unknown) => name("SELECT statement FROM claims WHERE id = ?", id);
+  const triggerName = (id: unknown) => {
+    const t = id
+      ? db.prepare("SELECT label, type FROM triggers WHERE id = ?").get(id as string) as Row | undefined
+      : undefined;
+    return t ? String(t.label || String(t.type).replaceAll("_", " ")) : "";
+  };
+  const subject = (type: EntityType, data: Row): string => {
+    switch (type) {
+      case "thesis":
+        return String(data.title ?? "");
+      case "thesis_link":
+        return name("SELECT name FROM assets WHERE id = ?", data.asset_id);
+      case "claim":
+        return String(data.statement ?? "");
+      case "thesis_claim":
+        return claimName(data.claim_id);
+      case "trigger":
+        return String(data.label || String(data.type ?? "").replaceAll("_", " "));
+      case "thesis_trigger":
+        return triggerName(data.trigger_id);
+    }
+  };
   const add = (type: EntityType, id: string) =>
-    out.push(...listRevisions(db, type, id).map((r) => ({ ...r, entity_type: type, entity_id: id })));
+    out.push(
+      ...listRevisions(db, type, id).map((r) => ({
+        ...r,
+        entity_type: type,
+        entity_id: id,
+        subject: subject(type, r.data as Row),
+      })),
+    );
   add("thesis", thesisId);
   const children: [string, EntityType][] = [
     ["SELECT id FROM thesis_links WHERE thesis_id = ?", "thesis_link"],

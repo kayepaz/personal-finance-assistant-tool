@@ -232,3 +232,34 @@ Deno.test("storage report counts tables and rows", async () => {
   assert.ok(data.bytes > 0);
   assert.deepEqual(r.pre_restore, { count: 0, bytes: 0 });
 });
+
+Deno.test("history lists the fields each change touched", async () => {
+  const { ok } = await setup();
+  const t = await ok("POST", "/api/theses", { title: "Draft idea", summary: "v1", status: "draft" });
+  await ok("PATCH", `/api/theses/${t.id}`, { summary: "v2 with more detail", note: "clarified" });
+  const trig = await ok("POST", "/api/triggers", {
+    thesis_id: t.id,
+    label: "Stop",
+    type: "pct_change",
+    params: { direction: "down", percent: "10" },
+  });
+  await ok("PATCH", `/api/triggers/${trig.id}`, {
+    params: { direction: "down", percent: "20" },
+    note: "wider",
+  });
+
+  const history = (await ok("GET", `/api/theses/${t.id}/history`)) as unknown as J[];
+  const summaryEdit = history.find((h) => h.entity_type === "thesis" && h.action === "update")!;
+  assert.deepEqual(summaryEdit.changes, [{ field: "summary", before: "v1", after: "v2 with more detail" }]);
+  assert.equal(summaryEdit.subject, "Draft idea");
+
+  const trigEdit = history.find((h) => h.entity_type === "trigger" && h.action === "update")!;
+  assert.deepEqual(trigEdit.changes.map((c: J) => c.field), ["params"]);
+  assert.equal(trigEdit.changes[0].before.percent, "10");
+  assert.equal(trigEdit.changes[0].after.percent, "20");
+  assert.equal(trigEdit.subject, "Stop");
+
+  const created = history.find((h) => h.entity_type === "thesis" && h.action === "create")!;
+  assert.ok(created.changes.every((c: J) => c.before === undefined || !("before" in c)));
+  assert.ok(created.changes.some((c: J) => c.field === "title" && c.after === "Draft idea"));
+});
