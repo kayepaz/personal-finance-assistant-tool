@@ -12,8 +12,7 @@ calculated.
 
 ## Status
 
-Pre-alpha, v0.4.0. What changed is in the [CHANGELOG](CHANGELOG.md) and the
-[releases](https://github.com/kayepaz/personal-finance-assistant-tool/releases); how it works is in
+Pre-alpha, v0.4.0. What changed is in the [CHANGELOG](CHANGELOG.md); how it works is in
 [docs/SPEC.md](docs/SPEC.md) and [docs/DATA_MODEL.md](docs/DATA_MODEL.md).
 
 ## Run it
