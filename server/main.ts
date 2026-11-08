@@ -1,4 +1,5 @@
 /** PFAT server entry point. */
+import config from "../deno.json" with { type: "json" };
 import { openAll } from "./db/db.ts";
 import { createApp } from "./app.ts";
 import { isSetUp } from "./services/auth.ts";
@@ -41,7 +42,7 @@ Deno.serve({
   hostname,
   onListen: ({ hostname, port }) => {
     console.log(
-      `PFAT listening on http://${hostname}:${port}  (data: ${dataDir}, jobs every ${everyMinutes} min)`,
+      `PFAT v${config.version} listening on http://${hostname}:${port}  (data: ${dataDir}, jobs every ${everyMinutes} min)`,
     );
   },
 }, handler);

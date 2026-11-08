@@ -1891,7 +1891,7 @@ export async function settingsView(nav: Nav, onSignOut: () => void): Promise<HTM
       "header",
       { class: "page-head" },
       h("h1", null, "Settings"),
-      h("p", { class: "sub" }, `Base currency ${s.base_currency} · ${s.time_zone}`),
+      h("p", { class: "sub" }, `PFAT v${s.version} · base currency ${s.base_currency} · ${s.time_zone}`),
     ),
     h(
       "div",

@@ -1,11 +1,14 @@
 # Changelog
 
-All notable changes are documented here. The project follows [Semantic Versioning](https://semver.org/).
-Versions are not tagged yet; the headings below group the work by milestone.
+All notable changes are documented here. The project follows [Semantic Versioning](https://semver.org/). Each
+version is tagged in git (`v0.1.0` …) with a matching GitHub release.
 
-## Unreleased
+## 0.4.0 — 2026-11-08
 
 ### Added
+
+- Browser tests (Playwright, development only) for the main screens, run by CI on every push.
+- Settings → Storage lists pre-restore copies with Delete and Delete all.
 
 - Price-target trigger ("sell at $X"), at or above / at or below.
 - Crypto (Alpha Vantage digital currency; Finnhub exchange symbols) and precious-metal (spot rate) prices.
@@ -29,6 +32,8 @@ Versions are not tagged yet; the headings below group the work by milestone.
 
 ### Changed
 
+- The accounts table only accepts the four current types; the unused mortgage-to-property link and auto-update
+  columns are removed (migration `0009`).
 - Account types are now self-directed, managed, real estate, and "Simple asset or liability" (formerly cash).
   A simple account is a liability when its balance is negative. Credit card, line of credit / mortgage, other
   asset and other liability accounts become simple accounts, with liability balances made negative (migration
@@ -41,7 +46,7 @@ Versions are not tagged yet; the headings below group the work by milestone.
 - Restoring a backup brought back the sign-ins saved in it, so other devices stayed signed in. A restore now
   signs out every device.
 
-## 0.3.0 — encrypted backups, alerts, trailing stops
+## 0.3.0 — 2026-11-06 — encrypted backups, alerts, trailing stops
 
 ### Added
 
@@ -56,7 +61,7 @@ Versions are not tagged yet; the headings below group the work by milestone.
 
 - Balances entered from To do were saved with the wrong type on self-directed accounts (migration `0004`).
 
-## 0.2.0 — balance sheet and reports
+## 0.2.0 — 2026-11-05 — balance sheet and reports
 
 ### Added
 
@@ -68,7 +73,7 @@ Versions are not tagged yet; the headings below group the work by milestone.
   thesis, and manage them on the new Claims and Triggers pages (migration `0002`).
 - GitHub Actions CI: format, lint, type-check, tests and a start-up smoke test.
 
-## 0.1.0 — first slice
+## 0.1.0 — 2026-11-03 — first slice
 
 ### Added
 

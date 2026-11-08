@@ -1,5 +1,6 @@
 /** HTTP application: JSON API under /api, PWA client for everything else. */
 import { stripTypeScriptTypes } from "node:module";
+import config from "../deno.json" with { type: "json" };
 import { type Databases, getSetting } from "./db/db.ts";
 import { type Ctx, errorResponse, HttpError, json, Router } from "./lib/http.ts";
 import { today } from "./lib/dates.ts";
@@ -46,7 +47,11 @@ function buildRouter(opts: AppOptions): Router<State> {
   let lastJobs: JobReport | null = null;
 
   // ----- setup & auth -----
-  r.get("/api/status", (c) => ({ setup: auth.isSetUp(data(c)), authenticated: !!c.state.sessionId }));
+  r.get("/api/status", (c) => ({
+    setup: auth.isSetUp(data(c)),
+    authenticated: !!c.state.sessionId,
+    version: config.version,
+  }));
 
   r.post("/api/setup", async (c) => {
     const b = await c.body();
@@ -107,6 +112,7 @@ function buildRouter(opts: AppOptions): Router<State> {
 
   // ----- settings & providers -----
   r.get("/api/settings", (c) => ({
+    version: config.version,
     base_currency: getSetting(data(c), "base_currency"),
     time_zone: getSetting(data(c), "time_zone"),
     today: c.state.today(),
