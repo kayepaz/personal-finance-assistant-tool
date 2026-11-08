@@ -1228,13 +1228,6 @@ function deleteAccountSection(nav: Nav, a: J): HTMLElement {
             }. This can't be undone.`
             : "Deletes the account. This can't be undone.",
         ),
-        deps.linked_from.length
-          ? h(
-            "p",
-            { class: "hint" },
-            `Also linked from: ${deps.linked_from.map((x: J) => x.name).join(", ")} (the link is removed).`,
-          )
-          : null,
         h("button", {
           class: "danger-button",
           onclick: async () => {
@@ -1988,7 +1981,7 @@ export async function settingsView(nav: Nav, onSignOut: () => void): Promise<HTM
     ),
     alertsPanel(nav, channels),
     backupPanel(nav, onSignOut),
-    storagePanel(store),
+    storagePanel(nav, store),
     communicationLog(nav, netlog),
     h(
       "div",
@@ -2978,9 +2971,20 @@ export function fmtBytes(n: number): string {
   return `${v >= 10 ? Math.round(v) : v.toFixed(1)} ${units[u]}`;
 }
 
-function storagePanel(store: J): HTMLElement {
+function storagePanel(nav: Nav, store: J): HTMLElement {
   const nf = new Intl.NumberFormat();
   const names: Record<string, string> = { data: "Data", cache: "Cache" };
+  const pre = store.pre_restore;
+  const remove = async (path: string, what: string) => {
+    if (!confirm(`Delete ${what}? This can't be undone.`)) return;
+    try {
+      const r = await del(path) as unknown as J;
+      nav.toast(`Deleted ${r?.deleted ?? ""} pre-restore cop${r?.deleted === 1 ? "y" : "ies"}.`, "ok");
+      nav.refresh();
+    } catch (e) {
+      nav.toast((e as Error).message, "error");
+    }
+  };
   return h(
     "div",
     { class: "panel" },
@@ -2996,22 +3000,49 @@ function storagePanel(store: J): HTMLElement {
           ` (${d.tables} tables, ${nf.format(d.rows)} total rows)`,
         )
       ),
-      store.pre_restore.count
-        ? h(
-          "li",
-          null,
-          h("strong", null, `Pre-restore copies — ${fmtBytes(store.pre_restore.bytes)}`),
-          ` (${store.pre_restore.count} folder${
-            store.pre_restore.count === 1 ? "" : "s"
-          } next to the database; unencrypted, delete by hand when no longer needed)`,
-        )
-        : null,
     ),
     h(
       "p",
       { class: "hint" },
       "Data is everything you've entered. Cache holds prices and exchange rates and can be rebuilt.",
     ),
+    pre.count
+      ? details(
+        `Pre-restore copies — ${fmtBytes(pre.bytes)} (${pre.count})`,
+        h(
+          "p",
+          { class: "hint" },
+          "Unencrypted copies of the data replaced by a restore, kept next to the database so a restore can be undone by hand. Delete them once you're happy with the restore.",
+        ),
+        h(
+          "ul",
+          { class: "list" },
+          pre.folders.map((f: J) =>
+            h(
+              "li",
+              { class: "row-actions" },
+              h(
+                "strong",
+                null,
+                f.created_at ? `Restore on ${new Date(f.created_at).toLocaleString()}` : f.name,
+              ),
+              ` — ${fmtBytes(f.bytes)} `,
+              h("button", {
+                class: "link danger",
+                onclick: () =>
+                  remove(`/storage/pre-restore/${encodeURIComponent(f.name)}`, "this pre-restore copy"),
+              }, "Delete"),
+            )
+          ),
+        ),
+        pre.count > 1
+          ? h("button", {
+            class: "danger-button",
+            onclick: () => remove("/storage/pre-restore", `all ${pre.count} pre-restore copies`),
+          }, "Delete all")
+          : null,
+      )
+      : null,
   );
 }
 

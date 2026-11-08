@@ -102,6 +102,7 @@ Only devices signed in to your tailnet can reach it. Stop with `tailscale serve 
 ```sh
 deno task dev     # restart on change
 deno task test    # run the test suite
+cd e2e && npm install && npx playwright install chromium && npx playwright test   # browser tests (dev only)
 deno task check   # type-check server and client
 deno task lint
 deno task fmt

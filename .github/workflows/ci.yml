@@ -32,3 +32,29 @@ jobs:
             sleep 1
           done
           echo "server did not start" && exit 1
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright (development only)
+        working-directory: e2e
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Browser tests
+        working-directory: e2e
+        run: npx playwright test
+      - name: Keep the report if something failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          retention-days: 7

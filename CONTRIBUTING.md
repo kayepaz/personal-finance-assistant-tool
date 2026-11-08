@@ -21,6 +21,7 @@ Thanks for helping. PFAT is run as a BDFL project: the maintainer has final say 
 ## Workflow
 
 1. Fork and branch from `main`.
-2. `deno task fmt && deno task lint && deno task check && deno task test` must pass.
+2. `deno task fmt && deno task lint && deno task check && deno task test` must pass, and so must the browser
+   tests in `e2e/` (Playwright; a development-only dependency — the app itself has none).
 3. Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:` …).
 4. Open a pull request describing what changed and why. Update `CHANGELOG.md` under "Unreleased".

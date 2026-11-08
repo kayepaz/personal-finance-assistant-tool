@@ -53,17 +53,11 @@ Deno.test("cash accounts record a balance and hold no assets", async () => {
 Deno.test("an account with no assets deletes with its balance history", async () => {
   const { dbs, ok, call } = await setup();
   const house = await ok("POST", "/api/accounts", { name: "House", kind: "cash" });
-  const visa = await ok("POST", "/api/accounts", {
-    name: "Card",
-    kind: "cash",
-    linked_account_id: house.id,
-  });
   await ok("POST", `/api/accounts/${house.id}/snapshots`, { amount: "100" });
   const deps = await ok("GET", `/api/accounts/${house.id}/dependents`);
-  assert.deepEqual([deps.assets.length, deps.balance_entries, deps.linked_from[0].name], [0, 1, "Card"]);
+  assert.deepEqual([deps.assets.length, deps.balance_entries], [0, 1]);
   await ok("DELETE", `/api/accounts/${house.id}`);
   assert.equal((await call("GET", `/api/accounts/${house.id}`)).status, 404);
-  assert.equal((await ok("GET", `/api/accounts/${visa.id}`)).linked_account_id, null);
   assert.equal((dbs.data.prepare("SELECT count(*) AS n FROM account_snapshots").get() as J).n, 0);
 });
 
@@ -141,4 +135,33 @@ Deno.test("migration 0008: old account types become simple accounts; liabilities
   assert.deepEqual(kinds, ["cash", "cash", "cash"]);
   const amounts = db.prepare("SELECT amount FROM account_snapshots ORDER BY id").all().map((r) => r.amount);
   assert.deepEqual(amounts, ["-1830.45", "12000", "0"]);
+});
+
+Deno.test("migration 0009: accounts table keeps data, drops unused columns, allows only current types", () => {
+  const db = openDatabase(":memory:");
+  db.exec("PRAGMA foreign_keys = OFF");
+  const dir = new URL("../server/db/migrations/data/", import.meta.url);
+  const files = [...Deno.readDirSync(dir)].map((e) => e.name).filter((n) => n < "0009").sort();
+  for (const f of files) db.exec(Deno.readTextFileSync(new URL(f, dir)));
+  db.exec(`PRAGMA user_version = ${files.length}; PRAGMA foreign_keys = ON;`);
+  db.exec(`
+    INSERT INTO accounts(id, name, kind, currency, created_at, updated_at, linked_account_id)
+      VALUES ('a1','House','real_estate','CAD',1,1,NULL), ('a2','Visa','cash','CAD',1,1,'a1');
+    INSERT INTO assets(id, account_id, name, tracking, created_at, updated_at, category) VALUES ('x1','a1','1 Elm','value',1,1,'property');
+    INSERT INTO account_snapshots VALUES ('s1','a2','2026-06-01','value','-5','manual','',1);
+  `);
+  migrate(db, "data");
+  const cols = db.prepare("SELECT name FROM pragma_table_info('accounts')").all().map((c) => c.name);
+  assert.ok(!cols.includes("linked_account_id") && !cols.includes("auto_update"));
+  assert.equal(
+    (db.prepare("SELECT count(*) AS n FROM assets").get() as J).n,
+    1,
+    "assets survive the rebuild",
+  );
+  assert.equal((db.prepare("SELECT count(*) AS n FROM account_snapshots").get() as J).n, 1);
+  assert.throws(() =>
+    db.exec(
+      "INSERT INTO accounts(id,name,kind,currency,created_at,updated_at) VALUES ('a3','x','credit_card','CAD',1,1)",
+    )
+  );
 });

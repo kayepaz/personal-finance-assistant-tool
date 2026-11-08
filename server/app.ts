@@ -86,6 +86,11 @@ function buildRouter(opts: AppOptions): Router<State> {
   });
 
   r.get("/api/storage", (c) => storage.storageReport(c.state.dbs));
+  r.delete("/api/storage/pre-restore", (c) => ({ deleted: storage.deletePreRestore(c.state.dbs) }));
+  r.delete(
+    "/api/storage/pre-restore/:name",
+    (c) => ({ deleted: storage.deletePreRestore(c.state.dbs, c.params.name) }),
+  );
 
   r.get("/api/network-log", (c) => {
     const before = Number(c.url.searchParams.get("before") ?? 0) || undefined;

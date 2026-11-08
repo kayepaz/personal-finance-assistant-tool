@@ -230,7 +230,7 @@ Deno.test("storage report counts tables and rows", async () => {
   assert.ok(data.tables >= 20);
   assert.ok(data.rows >= 3); // settings + session
   assert.ok(data.bytes > 0);
-  assert.deepEqual(r.pre_restore, { count: 0, bytes: 0 });
+  assert.deepEqual(r.pre_restore, { count: 0, bytes: 0, folders: [] });
 });
 
 Deno.test("history lists the fields each change touched", async () => {

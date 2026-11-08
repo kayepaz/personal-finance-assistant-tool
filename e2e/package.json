@@ -1,0 +1,12 @@
+{
+  "name": "pfat-e2e",
+  "private": true,
+  "description": "Browser tests for PFAT. Development only: the app itself has no npm dependencies.",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

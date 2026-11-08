@@ -12,7 +12,6 @@ function present(r: Row): Row {
   return {
     ...r,
     tags: JSON.parse(r.tags as string),
-    auto_update: r.auto_update === 1,
   };
 }
 
@@ -28,20 +27,12 @@ export function listAccounts(db: DB, includeArchived = false): Row[] {
   ).all().map(present);
 }
 
-function checkLink(db: DB, id: string | undefined, self?: string) {
-  if (!id) return;
-  if (id === self) throw badRequest("An account can't link to itself");
-  getAccount(db, id);
-}
-
 export function createAccount(db: DB, body: Obj, baseCurrency: string): Row {
   const id = uuidv7();
   const now = Date.now();
-  const linked = v.str(body, "linked_account_id", { optional: true }) || undefined;
-  checkLink(db, linked);
   db.prepare(
-    `INSERT INTO accounts(id, name, kind, currency, tags, notes, update_every_days, auto_update, linked_account_id,
-       created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO accounts(id, name, kind, currency, tags, notes, update_every_days,
+       created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     v.reqStr(body, "name", { max: 100 }),
@@ -50,8 +41,6 @@ export function createAccount(db: DB, body: Obj, baseCurrency: string): Row {
     JSON.stringify(v.strArray(body, "tags", { optional: true }) ?? []),
     v.str(body, "notes", { optional: true, max: 5000 }) ?? "",
     v.int(body, "update_every_days", { optional: true, min: 1, max: 3650 }) ?? null,
-    v.bool(body, "auto_update", { optional: true }) ? 1 : 0,
-    linked ?? null,
     now,
     now,
   );
@@ -104,12 +93,6 @@ export function updateAccount(db: DB, id: string, body: Obj, change?: KindChange
   if (v.has(body, "notes")) set("notes", v.str(body, "notes", { optional: true, max: 5000 }) ?? "");
   if (v.has(body, "update_every_days")) {
     set("update_every_days", v.int(body, "update_every_days", { optional: true, min: 1, max: 3650 }) ?? null);
-  }
-  if (v.has(body, "auto_update")) set("auto_update", v.bool(body, "auto_update") ? 1 : 0);
-  if (v.has(body, "linked_account_id")) {
-    const linked = v.str(body, "linked_account_id", { optional: true }) || undefined;
-    checkLink(db, linked, id);
-    set("linked_account_id", linked ?? null);
   }
   if (v.has(body, "archived")) {
     set("archived_at", v.bool(body, "archived") ? (current.archived_at as number ?? Date.now()) : null);
@@ -224,10 +207,9 @@ export function latestSnapshot(db: DB, accountId: string, kind: "value" | "cash"
 export interface AccountDependents {
   assets: { id: string; name: string; category: string | null; trades: number; theses: string[] }[];
   balance_entries: number;
-  linked_from: { id: string; name: string }[];
 }
 
-/** Assets block deletion; balance history is deleted with the account; links from other accounts are cleared. */
+/** Assets block deletion; balance history is deleted with the account. */
 export function accountDependents(db: DB, id: string): AccountDependents {
   getAccount(db, id);
   const assets = db.prepare("SELECT id, name, category FROM assets WHERE account_id = ? ORDER BY name").all(
@@ -249,12 +231,6 @@ export function accountDependents(db: DB, id: string): AccountDependents {
     balance_entries: Number(
       (db.prepare("SELECT count(*) AS n FROM account_snapshots WHERE account_id = ?").get(id) as Row).n,
     ),
-    linked_from: db.prepare("SELECT id, name FROM accounts WHERE linked_account_id = ?").all(
-      id,
-    ) as unknown as {
-      id: string;
-      name: string;
-    }[],
   };
 }
 
@@ -263,6 +239,6 @@ export function deleteAccount(db: DB, id: string): void {
   if (deps.assets.length) throw new HttpError(409, "Delete this account's assets first", deps);
   transaction(db, () => {
     db.prepare("DELETE FROM notifications WHERE ref_type = 'account' AND ref_id = ?").run(id);
-    db.prepare("DELETE FROM accounts WHERE id = ?").run(id); // balance history cascades; links are set to NULL
+    db.prepare("DELETE FROM accounts WHERE id = ?").run(id); // balance history cascades
   });
 }

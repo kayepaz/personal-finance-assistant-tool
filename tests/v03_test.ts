@@ -103,12 +103,30 @@ Deno.test("backup: encrypted, authenticated, and restores data over the live dat
     assert.equal((dbs.data.prepare("SELECT count(*) AS n FROM sessions").get() as J).n, 0);
     assert.equal((await c.call("GET", "/api/dashboard")).status, 401);
     assert.ok(await loginToken(app), "sign in again with the backup's passphrase");
+    // Pre-restore copies are listed in storage and can be deleted.
+    const store = await c2ok(app, "GET", "/api/storage");
+    assert.ok(store.pre_restore.count >= 1);
+    assert.ok(store.pre_restore.folders[0].created_at > 0);
+    const gone = await c2ok(app, "DELETE", "/api/storage/pre-restore");
+    assert.equal(gone.deleted, store.pre_restore.count);
+    assert.equal((await c2ok(app, "GET", "/api/storage")).pre_restore.count, 0);
     dbs.data.close();
     dbs.cache.close();
   } finally {
     Deno.removeSync(dir, { recursive: true });
   }
 });
+
+async function c2ok(app: (r: Request) => Promise<Response>, method: string, path: string): Promise<J> {
+  const res = await app(
+    new Request(`http://pfat.test${path}`, {
+      method,
+      headers: { authorization: `Bearer ${await loginToken(app)}` },
+    }),
+  );
+  assert.ok(res.status < 300, `${method} ${path} -> ${res.status}`);
+  return await res.json();
+}
 
 async function loginToken(app: (r: Request) => Promise<Response>): Promise<string> {
   resetLoginBrake();

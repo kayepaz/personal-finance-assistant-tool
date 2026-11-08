@@ -269,7 +269,7 @@ export function queueClaimReviews(data: DB, todayStr: string): number {
 export function queueBalanceUpdates(data: DB, todayStr: string): number {
   const tz = getSetting(data, "time_zone");
   const accounts = data.prepare(
-    "SELECT * FROM accounts WHERE archived_at IS NULL AND update_every_days IS NOT NULL AND auto_update = 0",
+    "SELECT * FROM accounts WHERE archived_at IS NULL AND update_every_days IS NOT NULL",
   ).all();
   let n = 0;
   for (const a of accounts) {
