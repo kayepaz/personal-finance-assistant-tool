@@ -15,16 +15,6 @@ const ACCOUNT_KINDS: [string, string][] = [
   ["real_estate", "Real estate"],
   ["cash", "Simple asset or liability"],
 ];
-const PRICE_SOURCES: [string, string][] = [["auto", "Fetch automatically"], ["manual", "I'll enter prices"]];
-
-const INSTRUMENT_KINDS: [string, string][] = [
-  ["equity", "Stock"],
-  ["etf", "ETF"],
-  ["fund", "Fund"],
-  ["crypto", "Crypto"],
-  ["metal", "Precious metal"],
-  ["other", "Other"],
-];
 
 const link = (nav: Nav, path: string, ...children: (Node | string)[]) =>
   h("a", {
@@ -907,10 +897,11 @@ export async function accountsView(nav: Nav): Promise<HTMLElement> {
 }
 
 export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
-  const [a, instruments, deps] = await Promise.all([
+  const [a, instruments, deps, markets] = await Promise.all([
     get(`/accounts/${id}`),
     get<J[]>("/instruments"),
     get(`/accounts/${id}/dependents`),
+    get("/markets"),
   ]);
   a.dependents = deps;
   if (a.kind === "real_estate") return realEstateView(nav, a);
@@ -924,30 +915,12 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
       i,
     ): [string, string] => [
       i.id,
-      `${i.symbol}${i.exchange ? ` (${i.exchange})` : ""} — ${i.name || label(i.kind)}`,
+      `${i.symbol} (${i.market}) — ${i.name || label(i.kind)}`,
     ]),
     ["__new", "+ New instrument…"],
   ]);
-  const newInstrument = h(
-    "fieldset",
-    { hidden: true },
-    h("legend", null, "New instrument"),
-    field("Symbol", input("symbol", { placeholder: "AAPL" })),
-    field("Exchange", input("exchange", { placeholder: "optional, e.g. TSX" })),
-    field("Name", input("inst_name")),
-    field("Type", select("inst_kind", INSTRUMENT_KINDS)),
-    field("Currency", input("inst_currency", { value: a.currency, maxlength: 3 })),
-    field(
-      "Provider symbol",
-      input("provider_symbol", { placeholder: "defaults to symbol" }),
-      "What the price provider calls it: SHOP.TO for TSX stocks, BTC for bitcoin, XAU for gold, XAG for silver.",
-    ),
-    field(
-      "Prices",
-      select("price_source", PRICE_SOURCES),
-      "Choose “I'll enter prices” for art, property or anything without a market feed.",
-    ),
-  );
+  const editor = instrumentEditor(nav, markets);
+  const newInstrument = h("fieldset", { hidden: true }, h("legend", null, "New instrument"), editor.el);
   instrumentPicker.addEventListener(
     "change",
     () => (newInstrument.hidden = instrumentPicker.value !== "__new"),
@@ -1096,15 +1069,7 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
               onsubmit: onSubmit(nav, async (d) => {
                 let instrumentId = d.instrument_id;
                 if (instrumentId === "__new") {
-                  const inst = await post("/instruments", {
-                    symbol: d.symbol,
-                    exchange: d.exchange,
-                    name: d.inst_name,
-                    kind: d.inst_kind,
-                    currency: d.inst_currency,
-                    provider_symbol: d.provider_symbol,
-                    price_source: d.price_source,
-                  });
+                  const inst = await post("/instruments", editor.values());
                   instrumentId = inst.id;
                 }
                 const asset = await post("/assets", {
@@ -1389,7 +1354,7 @@ export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
     a.instrument_id ? get(`/instruments/${a.instrument_id}`) : Promise.resolve(null),
   ]);
   a.price_source = inst?.price_source;
-  const deps = await get(`/assets/${id}/dependents`);
+  const [deps, markets] = await Promise.all([get(`/assets/${id}/dependents`), get("/markets")]);
   const price = a.latest_price;
 
   const sellForm = h(
@@ -1590,7 +1555,7 @@ export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
       )
       : null,
     inst ? pricesPanel(nav, inst) : null,
-    inst ? instrumentSettings(nav, inst) : null,
+    inst ? instrumentSettings(nav, inst, markets) : null,
     deleteAssetSection(nav, a, deps),
   );
 }
@@ -1831,22 +1796,15 @@ function deleteAssetSection(nav: Nav, a: J, deps: J): HTMLElement {
   );
 }
 
-function instrumentSettings(nav: Nav, inst: J): HTMLElement {
+function instrumentSettings(nav: Nav, inst: J, markets: J): HTMLElement {
+  const editor = instrumentEditor(nav, markets, inst);
   return details(
     "Instrument settings",
     h(
       "form",
       {
-        onsubmit: onSubmit(nav, (d) =>
-          patch(`/instruments/${inst.id}`, {
-            symbol: d.symbol,
-            exchange: d.exchange ?? "",
-            name: d.name ?? "",
-            kind: d.kind,
-            currency: d.currency,
-            provider_symbol: d.provider_symbol ?? "",
-            price_source: d.price_source,
-          }).then(() => {
+        onsubmit: onSubmit(nav, () =>
+          patch(`/instruments/${inst.id}`, editor.values()).then(() => {
             nav.toast("Instrument saved.", "ok");
             nav.refresh();
           })),
@@ -1854,24 +1812,207 @@ function instrumentSettings(nav: Nav, inst: J): HTMLElement {
       inst.asset_count > 1
         ? h("p", { class: "warn" }, `Shared by ${inst.asset_count} assets; changes apply to all of them.`)
         : null,
-      field("Symbol", input("symbol", { required: true, value: inst.symbol })),
-      field("Exchange", input("exchange", { value: inst.exchange })),
-      field("Name", input("name", { value: inst.name })),
-      field("Type", select("kind", INSTRUMENT_KINDS, {}, inst.kind)),
-      field(
-        "Currency",
-        input("currency", { value: inst.currency, maxlength: 3, required: true }),
-        "Trade prices are recorded in this currency; changing it doesn't convert them.",
+      editor.el,
+      h(
+        "p",
+        { class: "hint" },
+        "Trade prices are recorded in the instrument's currency; changing it doesn't convert them. A new symbol or market starts a fresh price history.",
       ),
-      field(
-        "Provider symbol",
-        input("provider_symbol", { value: inst.provider_symbol }),
-        "A new symbol starts a fresh price history.",
-      ),
-      field("Prices", select("price_source", PRICE_SOURCES, {}, inst.price_source)),
       h("button", { type: "submit", class: "primary" }, "Save"),
     ),
   );
+}
+
+// ---------------------------------------------------------------- instrument editor
+
+const KIND_LABELS: Record<string, string> = {
+  equity: "Stock",
+  etf: "ETF",
+  fund: "Fund",
+  crypto: "Crypto",
+  metal: "Precious metal",
+  other: "Other",
+};
+
+/**
+ * Market-first instrument form. The market decides the type choices, default currency, price source and the
+ * symbol sent to price providers; an Advanced section allows an override. "Check symbol" fetches one price.
+ */
+function instrumentEditor(nav: Nav, data: J, current: J = {}): { el: HTMLElement; values: () => J } {
+  const markets = data.markets as J[];
+  const metals = data.metals as J[];
+  const byId = (id: string) => markets.find((m) => m.id === id) ?? markets[0];
+  const initialMarket = current.market ?? "US";
+
+  const marketSel = h(
+    "select",
+    { name: "inst_market" },
+    ["Stock exchanges", "Other"].map((g) =>
+      h(
+        "optgroup",
+        { label: g },
+        markets.filter((m) => m.group === g).map((m) =>
+          h("option", { value: m.id, selected: m.id === initialMarket }, m.label)
+        ),
+      )
+    ),
+  );
+  const symbolInput = input("inst_symbol", {
+    value: current.symbol ?? "",
+    autocomplete: "off",
+    autocapitalize: "characters",
+    placeholder: "e.g. SHOP",
+  });
+  const metalSel = select(
+    "inst_metal",
+    metals.map((m: J): [string, string] => [m.code, `${m.name} (${m.code})`]),
+    {},
+    current.symbol,
+  );
+  const nameInput = input("inst_name", { value: current.name ?? "", placeholder: "e.g. Shopify" });
+  const kindSel = h("select", { name: "inst_kind" });
+  const currencyInput = input("inst_currency", { value: current.currency ?? "", maxlength: 3 });
+  const overrideInput = input("inst_override", {
+    value: current.provider_symbol &&
+        current.provider_symbol !== canonical(byId(initialMarket), current.symbol ?? "")
+      ? current.provider_symbol
+      : "",
+    placeholder: "leave blank to use the symbol shown above",
+  });
+  const manualBox = h("input", {
+    type: "checkbox",
+    checked: current.price_source === "manual" && current.market !== "OTHER",
+  });
+  const hint = h("p", { class: "hint provider-hint" });
+  const note = h("p", { class: "hint" });
+  const checkResult = h("p", { class: "check-result" });
+  let currencyTouched = !!current.id; // an existing instrument keeps its currency; a new one follows the market
+  currencyInput.addEventListener("input", () => (currencyTouched = true));
+
+  const symbolField = field("Symbol", symbolInput);
+  const metalField = field("Metal", metalSel);
+  const kindField = field("Type", kindSel);
+  const checkBtn = h("button", { type: "button" }, "Check symbol");
+
+  function canonical(m: J, sym: string): string {
+    const s = sym.trim().toUpperCase();
+    if (!m || m.alphaVantageSuffix === null || m.alphaVantageSuffix === "") return s;
+    return s.endsWith(m.alphaVantageSuffix) ? s : `${s}${m.alphaVantageSuffix}`;
+  }
+  const symbol =
+    () => (byId(marketSel.value).id === "METAL" ? metalSel.value : symbolInput.value.trim().toUpperCase());
+  const providerSymbol = () =>
+    overrideInput.value.trim().toUpperCase() || canonical(byId(marketSel.value), symbol());
+
+  function refresh(marketChanged: boolean) {
+    const m = byId(marketSel.value);
+    symbolField.hidden = m.id === "METAL";
+    metalField.hidden = m.id !== "METAL";
+    const kinds = m.kinds as string[];
+    const keep = kindSel.value || current.kind;
+    kindSel.replaceChildren(
+      ...kinds.map((k) => h("option", { value: k, selected: k === keep }, KIND_LABELS[k] ?? k)),
+    );
+    kindField.hidden = kinds.length === 1;
+    if (marketChanged && !currencyTouched) currencyInput.value = m.currency;
+    if (!currencyInput.value) currencyInput.value = m.currency;
+    symbolInput.placeholder = m.id === "CRYPTO"
+      ? "e.g. BTC"
+      : m.id === "OTHER"
+      ? "a short code, e.g. MAPLE"
+      : "e.g. SHOP";
+    nameInput.placeholder = m.id === "CRYPTO"
+      ? "e.g. Bitcoin"
+      : m.id === "METAL"
+      ? "e.g. Gold bullion"
+      : m.id === "OTHER"
+      ? "e.g. Painting by …"
+      : "e.g. Shopify";
+    note.textContent = m.note ?? "";
+    note.hidden = !m.note;
+    const manual = m.priceSource === "manual" || manualBox.checked;
+    const ps = providerSymbol();
+    const providers = [
+      m.alphaVantageSuffix !== null ? "Alpha Vantage" : null,
+      m.finnhub && (m.id !== "CRYPTO" || ps.includes(":")) ? "Finnhub" : null,
+    ].filter(Boolean);
+    hint.textContent = manual
+      ? "Prices: you'll record them yourself on the asset page."
+      : ps
+      ? `Prices: ${ps} from ${providers.join(" or ")}${m.id === "METAL" ? " (spot, per troy ounce)" : ""}.`
+      : `Prices from ${providers.join(" or ")}.`;
+    checkBtn.hidden = manual;
+    checkResult.textContent = "";
+  }
+  marketSel.addEventListener("change", () => refresh(true));
+  for (const el of [symbolInput, metalSel, overrideInput, manualBox]) {
+    el.addEventListener("input", () => refresh(false));
+  }
+  manualBox.addEventListener("change", () => refresh(false));
+
+  checkBtn.addEventListener("click", async () => {
+    if (!symbol()) return nav.toast("Enter a symbol first", "error");
+    checkBtn.setAttribute("disabled", "");
+    checkResult.className = "check-result";
+    checkResult.textContent = "Checking…";
+    try {
+      const r = await post("/instruments/check", values());
+      if (r.ok) {
+        checkResult.className = "check-result ok";
+        checkResult.textContent = `✓ ${r.provider_symbol}: ${
+          fmtNum(r.price)
+        } ${currencyInput.value.toUpperCase()} on ${r.date} (${r.provider}).`;
+      } else {
+        checkResult.className = "check-result bad";
+        checkResult.textContent = `✗ No price for ${r.provider_symbol}. ${
+          r.tried.map((t: J) => `${t.provider}: ${t.result}`).join("; ")
+        }.`;
+      }
+    } catch (e) {
+      checkResult.className = "check-result bad";
+      checkResult.textContent = `✗ ${(e as Error).message}`;
+    } finally {
+      checkBtn.removeAttribute("disabled");
+    }
+  });
+
+  function values(): J {
+    const m = byId(marketSel.value);
+    return {
+      market: m.id,
+      symbol: symbol(),
+      name: nameInput.value.trim(),
+      kind: kindSel.value || (m.kinds as string[])[0],
+      currency: currencyInput.value.trim().toUpperCase() || m.currency,
+      provider_symbol: overrideInput.value.trim(),
+      price_source: m.priceSource === "manual" || manualBox.checked ? "manual" : "auto",
+    };
+  }
+
+  const el = h(
+    "div",
+    { class: "subfields" },
+    field("Market", marketSel),
+    note,
+    symbolField,
+    metalField,
+    field("Name", nameInput),
+    kindField,
+    field("Currency", currencyInput),
+    hint,
+    h("div", { class: "row-form" }, checkBtn, checkResult),
+    details(
+      "Advanced",
+      field(
+        "Provider symbol override",
+        overrideInput,
+        "Only if a provider names this differently, e.g. BRK-B or BINANCE:BTCUSDT for Finnhub crypto.",
+      ),
+      h("label", { class: "check" }, manualBox, " I'll enter prices myself instead of fetching them"),
+    ),
+  );
+  refresh(false);
+  return { el, values };
 }
 
 // ---------------------------------------------------------------- settings

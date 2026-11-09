@@ -12,6 +12,7 @@ import * as assets from "./services/assets.ts";
 import * as theses from "./services/theses.ts";
 import * as claims from "./services/claims.ts";
 import * as triggers from "./services/triggers.ts";
+import { MARKETS, METALS } from "./services/markets.ts";
 import * as valuation from "./services/valuation.ts";
 import * as backup from "./services/backup.ts";
 import * as channels from "./services/channels.ts";
@@ -248,6 +249,21 @@ function buildRouter(opts: AppOptions): Router<State> {
   // ----- instruments -----
   r.get("/api/instruments", (c) => instruments.listInstruments(data(c)));
   r.post("/api/instruments", async (c) => json(instruments.createInstrument(data(c), await c.body()), 201));
+  r.get("/api/markets", () => ({ markets: MARKETS, metals: METALS }));
+  r.post("/api/instruments/check", async (c) => {
+    const b = await c.body();
+    const f = instruments.resolveFields(b);
+    if (f.price_source === "manual") {
+      throw new HttpError(400, "This market has no price feed; you'll enter prices");
+    }
+    return await prices.checkSymbol(
+      data(c),
+      cache(c),
+      { symbol: f.provider_symbol, kind: f.kind, currency: f.currency, market: f.market.id },
+      new Date().toISOString().slice(0, 10),
+      c.state.fetchFn,
+    );
+  });
   r.get("/api/instruments/:id", (c) => instruments.instrumentDetail(data(c), c.params.id));
   r.patch(
     "/api/instruments/:id",

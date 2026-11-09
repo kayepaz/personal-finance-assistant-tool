@@ -302,9 +302,11 @@ export function queueBalanceUpdates(data: DB, todayStr: string): number {
 }
 
 /** Instruments worth pricing: those held (open quantity) or linked to an active thesis. */
-export function instrumentsToPrice(data: DB): { provider_symbol: string; currency: string; kind: string }[] {
+export function instrumentsToPrice(
+  data: DB,
+): { provider_symbol: string; currency: string; kind: string; market: string }[] {
   return data.prepare(
-    `SELECT DISTINCT i.provider_symbol, i.currency, i.kind FROM instruments i
+    `SELECT DISTINCT i.provider_symbol, i.currency, i.kind, i.market FROM instruments i
      JOIN assets a ON a.instrument_id = i.id
      WHERE a.archived_at IS NULL AND i.price_source = 'auto' AND (
        EXISTS (SELECT 1 FROM trades b WHERE b.asset_id = a.id AND b.side = 'buy'
@@ -312,7 +314,7 @@ export function instrumentsToPrice(data: DB): { provider_symbol: string; currenc
        OR EXISTS (SELECT 1 FROM thesis_links l JOIN theses t ON t.id = l.thesis_id
                   WHERE l.asset_id = a.id AND l.unlinked_at IS NULL AND t.status IN ('active','triggered'))
      )`,
-  ).all() as { provider_symbol: string; currency: string; kind: string }[];
+  ).all() as { provider_symbol: string; currency: string; kind: string; market: string }[];
 }
 
 export interface JobReport {

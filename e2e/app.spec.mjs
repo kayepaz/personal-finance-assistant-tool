@@ -58,9 +58,11 @@ test("investing: a thesis with a shared trigger fires and can be adjusted", asyn
   await page.click("button:has-text('Create account')");
   await open("Add asset");
   await page.selectOption("select[name=instrument_id]", "__new");
-  await page.fill("input[name=symbol]", "MAPLE");
+  await expect(page.locator(".provider-hint")).toContainText("from Alpha Vantage or Finnhub");
+  await page.selectOption("select[name=inst_market]", "OTHER");
+  await expect(page.locator(".provider-hint")).toContainText("record them yourself");
+  await page.fill("input[name=inst_symbol]", "maple");
   await page.selectOption("select[name=inst_kind]", "metal");
-  await page.selectOption("select[name=price_source]", "manual");
   await page.click("button:has-text('Add asset')");
   await expect(page.getByRole("heading", { name: "MAPLE" })).toBeVisible();
   await open("Record a buy");

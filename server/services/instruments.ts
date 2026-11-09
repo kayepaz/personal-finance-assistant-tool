@@ -1,6 +1,7 @@
 import type { DB, Row } from "../db/db.ts";
 import { uuidv7 } from "../lib/ids.ts";
-import { conflict, notFound } from "../lib/http.ts";
+import { badRequest, conflict, notFound } from "../lib/http.ts";
+import { canonicalSymbol, defaultMarket, getMarket, type Market, MARKETS, METALS } from "./markets.ts";
 import * as v from "../lib/validate.ts";
 
 export const INSTRUMENT_KINDS = ["equity", "etf", "fund", "crypto", "metal", "other"] as const;
@@ -21,41 +22,6 @@ export function instrumentDetail(db: DB, id: string): Row {
       (db.prepare("SELECT count(*) AS n FROM assets WHERE instrument_id = ?").get(id) as Row).n,
     ),
   };
-}
-
-/** Edit an instrument. Symbol + exchange must stay unique. */
-export function updateInstrument(db: DB, id: string, body: Record<string, unknown>): Row {
-  const cur = getInstrument(db, id);
-  const symbol = v.has(body, "symbol")
-    ? v.reqStr(body, "symbol", { max: 32 }).toUpperCase()
-    : cur.symbol as string;
-  const exchange = v.has(body, "exchange")
-    ? (v.str(body, "exchange", { optional: true, max: 32 }) ?? "").toUpperCase()
-    : cur.exchange as string;
-  const clash = db.prepare("SELECT id FROM instruments WHERE symbol = ? AND exchange = ? AND id <> ?").get(
-    symbol,
-    exchange,
-    id,
-  );
-  if (clash) throw conflict(`${symbol}${exchange ? ` on ${exchange}` : ""} already exists`);
-  db.prepare(
-    `UPDATE instruments SET symbol = ?, exchange = ?, name = ?, kind = ?, currency = ?, provider_symbol = ?,
-       price_source = ? WHERE id = ?`,
-  ).run(
-    symbol,
-    exchange,
-    v.has(body, "name") ? v.str(body, "name", { optional: true, max: 200 }) ?? "" : cur.name as string,
-    v.has(body, "kind") ? v.oneOf(body, "kind", INSTRUMENT_KINDS)! : cur.kind as string,
-    v.has(body, "currency") ? v.currency(body, "currency")! : cur.currency as string,
-    v.has(body, "provider_symbol")
-      ? v.str(body, "provider_symbol", { optional: true, max: 64 }) || symbol
-      : cur.provider_symbol as string,
-    v.has(body, "price_source")
-      ? v.oneOf(body, "price_source", ["auto", "manual"] as const)!
-      : cur.price_source as string,
-    id,
-  );
-  return instrumentDetail(db, id);
 }
 
 /** Record a price by hand (art, metals, anything without a feed, or to correct a fetched price). */
@@ -84,31 +50,108 @@ export function listInstruments(db: DB): Row[] {
   return db.prepare("SELECT * FROM instruments ORDER BY symbol, exchange").all();
 }
 
-export function createInstrument(db: DB, body: Record<string, unknown>): Row {
-  const symbol = v.reqStr(body, "symbol", { max: 32 }).toUpperCase();
-  const exchange = (v.str(body, "exchange", { optional: true, max: 32 }) ?? "").toUpperCase();
-  const existing = db.prepare("SELECT id FROM instruments WHERE symbol = ? AND exchange = ?").get(
+export interface InstrumentFields {
+  market: Market;
+  symbol: string;
+  kind: string;
+  currency: string;
+  provider_symbol: string;
+  price_source: "auto" | "manual";
+}
+
+/**
+ * Resolve and validate instrument fields. The market supplies defaults (type, currency, price source) and the
+ * provider symbol; `provider_symbol` in the body is an advanced override.
+ */
+export function resolveFields(body: Record<string, unknown>, current?: Row): InstrumentFields {
+  const has = (k: string) => v.has(body, k);
+  const kindIn = has("kind")
+    ? v.oneOf(body, "kind", INSTRUMENT_KINDS)
+    : (current?.kind as string | undefined);
+  const sourceIn = has("price_source")
+    ? v.oneOf(body, "price_source", ["auto", "manual"] as const)
+    : (current?.price_source as "auto" | "manual" | undefined);
+  const marketId = has("market")
+    ? v.oneOf(body, "market", MARKETS.map((m) => m.id))!
+    : (current?.market as string | undefined) ?? defaultMarket(kindIn ?? "equity", sourceIn ?? "auto");
+  const market = getMarket(marketId)!;
+
+  const symbol = (has("symbol") ? v.reqStr(body, "symbol", { max: 32 }) : String(current?.symbol ?? ""))
+    .toUpperCase();
+  if (!symbol) throw badRequest("'symbol' is required");
+  const kind = kindIn && (market.kinds.includes(kindIn) || market.id === "OTHER") ? kindIn : market.kinds[0];
+  if (kindIn && kind !== kindIn) {
+    throw badRequest(`${market.label} doesn't list ${kindIn === "etf" ? "ETFs" : `${kindIn}s`}`);
+  }
+  if (market.id === "METAL" && !METALS.some((m) => m.code === symbol)) {
+    throw badRequest(`Precious metals are ${METALS.map((m) => `${m.code} (${m.name})`).join(", ")}`);
+  }
+  const currency = has("currency")
+    ? v.currency(body, "currency")!
+    : (current?.currency as string) ?? market.currency;
+  const priceSource = market.priceSource === "manual" ? "manual" : sourceIn ?? "auto";
+
+  const symbolChanged = has("symbol") || has("market");
+  const override = has("provider_symbol")
+    ? (v.str(body, "provider_symbol", { optional: true, max: 64 }) ?? "")
+    : null;
+  const providerSymbol = override
+    ? override.toUpperCase()
+    : override === "" || symbolChanged || !current
+    ? canonicalSymbol(market.id, symbol)
+    : current.provider_symbol as string;
+  return { market, symbol, kind, currency, provider_symbol: providerSymbol, price_source: priceSource };
+}
+
+function checkUnique(db: DB, symbol: string, market: string, exceptId?: string) {
+  const clash = db.prepare("SELECT id FROM instruments WHERE symbol = ? AND exchange = ? AND id <> ?").get(
     symbol,
-    exchange,
+    market,
+    exceptId ?? "",
   );
-  if (existing) throw conflict(`${symbol}${exchange ? ` on ${exchange}` : ""} already exists`);
+  if (clash) throw conflict(`${symbol} on ${getMarket(market)?.label ?? market} already exists`);
+}
+
+export function createInstrument(db: DB, body: Record<string, unknown>): Row {
+  const f = resolveFields(body);
+  checkUnique(db, f.symbol, f.market.id);
   const id = uuidv7();
   db.prepare(
-    `INSERT INTO instruments(id, symbol, exchange, name, kind, currency, provider_symbol, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO instruments(id, symbol, exchange, market, name, kind, currency, provider_symbol, price_source, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
-    symbol,
-    exchange,
+    f.symbol,
+    f.market.id,
+    f.market.id,
     v.str(body, "name", { optional: true, max: 200 }) ?? "",
-    v.oneOf(body, "kind", INSTRUMENT_KINDS)!,
-    v.currency(body, "currency")!,
-    v.str(body, "provider_symbol", { optional: true, max: 64 }) || symbol,
+    f.kind,
+    f.currency,
+    f.provider_symbol,
+    f.price_source,
     Date.now(),
   );
-  if (v.has(body, "price_source")) {
-    db.prepare("UPDATE instruments SET price_source = ? WHERE id = ?")
-      .run(v.oneOf(body, "price_source", ["auto", "manual"] as const)!, id);
-  }
   return getInstrument(db, id);
+}
+
+/** Edit an instrument. Symbol + market must stay unique. */
+export function updateInstrument(db: DB, id: string, body: Record<string, unknown>): Row {
+  const cur = getInstrument(db, id);
+  const f = resolveFields(body, cur);
+  checkUnique(db, f.symbol, f.market.id, id);
+  db.prepare(
+    `UPDATE instruments SET symbol = ?, exchange = ?, market = ?, name = ?, kind = ?, currency = ?,
+       provider_symbol = ?, price_source = ? WHERE id = ?`,
+  ).run(
+    f.symbol,
+    f.market.id,
+    f.market.id,
+    v.has(body, "name") ? v.str(body, "name", { optional: true, max: 200 }) ?? "" : cur.name as string,
+    f.kind,
+    f.currency,
+    f.provider_symbol,
+    f.price_source,
+    id,
+  );
+  return instrumentDetail(db, id);
 }

@@ -862,3 +862,25 @@ dl.netlog-detail code.value {
   border-radius: 6px;
   display: block;
 }
+.provider-hint {
+  font-family: var(--mono);
+  font-size: .82rem;
+}
+.check-result {
+  margin: 0;
+  font-size: .88rem;
+}
+.check-result.ok {
+  color: var(--ok);
+}
+.check-result.bad {
+  color: var(--danger);
+}
+[hidden] {
+  display: none !important;
+}
+input[name=inst_symbol],
+input[name=inst_override],
+input[name=inst_currency] {
+  text-transform: uppercase;
+}

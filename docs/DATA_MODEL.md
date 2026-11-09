@@ -32,6 +32,7 @@ notification_channels ──< notification_deliveries >── notifications   (o
 trailing_highs (high-water mark per trigger × thesis link)
 assets ──< asset_values   (dated declared values / amounts owed for houses and mortgages)
 instruments ──< manual_prices
+           (instruments.market: US, TSX, TSXV, LSE, XETRA, BSE, SSE, SZSE, CRYPTO, METAL or OTHER)
 consents   (what data may leave the server, and where)
 sessions, settings
 ```

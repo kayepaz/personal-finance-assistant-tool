@@ -21,6 +21,7 @@ export interface PriceRequest {
   symbol: string; // provider symbol, e.g. AAPL, SHOP.TO, BTC, XAU, BINANCE:BTCUSDT
   kind: string; // instrument kind: equity, etf, fund, crypto, metal, other
   currency: string; // the instrument's currency (the market to price crypto/metals in)
+  market?: string; // PFAT market id (US, TSX, CRYPTO…); providers skip markets they don't cover
 }
 
 export interface PriceProvider {
@@ -29,6 +30,8 @@ export interface PriceProvider {
   dailyLimit: number;
   /** What the consent prompt tells the user. */
   consentText: string;
+  /** Whether this provider can price the request at all (checked before using a call from the daily limit). */
+  covers(req: PriceRequest): boolean;
   fetchLatestClose(req: PriceRequest, apiKey: string, fetchFn: typeof fetch): Promise<DailyClose | null>;
 }
 
@@ -44,6 +47,7 @@ export const alphaVantage: PriceProvider = {
   dailyLimit: 25,
   consentText:
     "PFAT will send ticker symbols (for example AAPL) and your Alpha Vantage API key to www.alphavantage.co to fetch daily closing prices. No holdings, quantities or balances are sent.",
+  covers: (req) => req.market !== "OTHER",
   async fetchLatestClose(req, apiKey, fetchFn) {
     const url = new URL("https://www.alphavantage.co/query");
     const params: Record<string, string> = req.kind === "crypto"
@@ -90,9 +94,11 @@ export const finnhub: PriceProvider = {
   dailyLimit: 1000, // Finnhub limits per minute (60); this cap keeps a runaway loop in check.
   consentText:
     "PFAT will send ticker symbols (for example AAPL) and your Finnhub API key to finnhub.io to fetch latest prices. No holdings, quantities or balances are sent.",
+  // Crypto only with exchange-prefixed symbols (e.g. BINANCE:BTCUSDT); no metals; the free plan quotes US stocks only.
+  covers: (req) =>
+    req.kind !== "metal" && (req.kind !== "crypto" || req.symbol.includes(":")) &&
+    (!req.market || req.market === "US" || req.market === "CRYPTO"),
   async fetchLatestClose(req, apiKey, fetchFn) {
-    // Finnhub prices crypto only with exchange-prefixed symbols (e.g. BINANCE:BTCUSDT); it has no metals.
-    if (req.kind === "metal" || (req.kind === "crypto" && !req.symbol.includes(":"))) return null;
     const url = new URL("https://finnhub.io/api/v1/quote");
     url.search = new URLSearchParams({ symbol: req.symbol, token: apiKey }).toString();
     const res = await fetchFn(url, { headers: { [PURPOSE_HEADER]: `Price · ${req.symbol} · Finnhub` } });
@@ -229,7 +235,7 @@ export interface RefreshResult {
 export async function refreshPrices(
   data: DB,
   cache: DB,
-  instruments: { provider_symbol: string; currency: string; kind?: string }[],
+  instruments: { provider_symbol: string; currency: string; kind?: string; market?: string }[],
   utcDay: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<RefreshResult> {
@@ -254,7 +260,14 @@ export async function refreshPrices(
 
     let done = false;
     let lastError = "No market-data provider is set up (add an API key and consent in Settings)";
+    const req: PriceRequest = {
+      symbol,
+      kind: inst.kind ?? "equity",
+      currency: inst.currency,
+      market: inst.market,
+    };
     for (const p of usable) {
+      if (!p.covers(req)) continue;
       const u = usage(cache, p.id, utcDay);
       if (u.exhausted || u.calls >= p.dailyLimit) {
         lastError = `${p.name} daily limit reached`;
@@ -262,11 +275,7 @@ export async function refreshPrices(
       }
       try {
         countCall(cache, p.id, utcDay);
-        const close = await p.fetchLatestClose(
-          { symbol, kind: inst.kind ?? "equity", currency: inst.currency },
-          getSetting(data, `api_key:${p.id}`)!,
-          fetchFn,
-        );
+        const close = await p.fetchLatestClose(req, getSetting(data, `api_key:${p.id}`)!, fetchFn);
         if (!close) {
           lastError = `${p.name} has no price for ${symbol}`;
           continue;
@@ -332,4 +341,62 @@ export function closesSince(data: DB, cache: DB, symbol: string, start: string):
      WHERE i.provider_symbol = ? AND m.price_date >= ?`,
   ).all(symbol, start);
   return [...fetched, ...manual];
+}
+
+// ---------- check a symbol before saving ----------
+
+export interface CheckResult {
+  ok: boolean;
+  provider_symbol: string;
+  provider?: string;
+  price?: string;
+  date?: string;
+  tried: { provider: string; result: string }[];
+}
+
+/**
+ * Try to fetch one price for a symbol right away, using the providers that are switched on (in order). Each
+ * attempt counts against that provider's daily limit and appears in the communication log. A price found is
+ * cached, so the instrument has a price as soon as it's saved.
+ */
+export async function checkSymbol(
+  data: DB,
+  cache: DB,
+  req: PriceRequest,
+  utcDay: string,
+  fetchFn: typeof fetch,
+): Promise<CheckResult> {
+  const result: CheckResult = { ok: false, provider_symbol: req.symbol, tried: [] };
+  for (const p of PROVIDERS) {
+    if (!p.covers(req)) {
+      result.tried.push({ provider: p.name, result: "doesn't cover this market (free plan)" });
+      continue;
+    }
+    const key = getSetting(data, `api_key:${p.id}`);
+    if (!key || !hasConsent(data, `market_data:${p.id}`)) {
+      result.tried.push({ provider: p.name, result: "not switched on (Settings → Market data)" });
+      continue;
+    }
+    const u = usage(cache, p.id, utcDay);
+    if (u.exhausted || u.calls >= p.dailyLimit) {
+      result.tried.push({ provider: p.name, result: "daily limit reached" });
+      continue;
+    }
+    try {
+      countCall(cache, p.id, utcDay);
+      const close = await p.fetchLatestClose(req, key, fetchFn);
+      if (!close) {
+        result.tried.push({ provider: p.name, result: "no price for this symbol" });
+        continue;
+      }
+      storePrice(cache, req.symbol, close, req.currency, p.id);
+      return { ...result, ok: true, provider: p.name, price: close.close, date: close.date };
+    } catch (err) {
+      if (err instanceof QuotaExceeded) {
+        cache.prepare("UPDATE api_usage SET exhausted = 1 WHERE provider = ? AND day = ?").run(p.id, utcDay);
+      }
+      result.tried.push({ provider: p.name, result: (err as Error).message });
+    }
+  }
+  return result;
 }

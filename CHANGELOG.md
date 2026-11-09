@@ -3,6 +3,29 @@
 All notable changes are documented here. The project follows [Semantic Versioning](https://semver.org/). Each
 version is tagged in git (`v0.1.0` …) with a matching GitHub release.
 
+## Unreleased
+
+### Changed
+
+- New instrument form starts from a **Market** dropdown (US, TSX, TSX Venture, London, Xetra, Bombay,
+  Shanghai, Shenzhen, Crypto, Precious metal, Other). The market fills in the currency, type choices and the
+  symbol sent to price providers, and a line under the form shows exactly what will be fetched and from where.
+  Metals are picked from a list. Provider symbol and "I'll enter prices" moved to a collapsed Advanced
+  section. The same editor is used for Instrument settings on the asset page.
+- Background price refresh skips Finnhub for markets its free plan doesn't cover, so it no longer spends a
+  call or masks Alpha Vantage's daily-limit deferral.
+
+### Added
+
+- **Check symbol** button: fetches one price and shows the result, or what each provider said.
+- `GET /api/markets` and `POST /api/instruments/check`.
+
+### Fixed
+
+- Canadian symbols: the old hint suggested `SHOP.TO`, which Alpha Vantage doesn't recognise. Migration `0010`
+  adds `instruments.market`, works it out from the old exchange text and symbol suffixes, and rewrites TSX /
+  TSX Venture provider symbols to `.TRT` / `.TRV`.
+
 ## 0.4.0 — 2026-11-08
 
 ### Added

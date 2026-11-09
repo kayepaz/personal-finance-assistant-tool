@@ -33,13 +33,18 @@ calculated.
   simple asset or liability (internal kind `cash`). Has a currency, optional tags (TFSA, RRSP,
   non-registered…), free-text jurisdiction notes, and a "remind me to update every X days" setting. Any
   account whose value is negative is reported as a liability (shown as a positive amount owed).
-- **Instrument** — something with a price (ticker + exchange + currency + provider symbol). Its price source
-  is _automatic_ (stocks and ETFs via `TIME_SERIES_DAILY`/Finnhub quote; crypto via Alpha Vantage
-  `DIGITAL_CURRENCY_DAILY` in the instrument's currency, or Finnhub with an exchange symbol like
-  `BINANCE:BTCUSDT`; metals via Alpha Vantage spot rates such as `XAU`) or _manual_ (art, property, coins).
-  Prices the user records live in `data.db`; the newest date wins, and a manual price wins a tie. Instruments
-  and trades can be edited: a buy's quantity can't drop below what's been sold, dates can't cross the sales
-  they're tied to, and a sale's quantity changes by deleting and re-recording it.
+- **Instrument** — something with a price: a market (picked from a list, see below), symbol, type, currency
+  and the provider symbol sent to price providers. The market sets the type choices, default currency and
+  provider symbol (Alpha Vantage suffixes: TSX `.TRT`, TSX Venture `.TRV`, London `.LON`, Xetra `.DEX`, Bombay
+  `.BSE`, Shanghai `.SHH`, Shenzhen `.SHZ`); an Advanced override covers odd cases. Finnhub's free plan only
+  quotes US stocks, so it is skipped for other markets. "Check symbol" fetches one price before saving. London
+  prices arrive in pence (GBX) and are not converted yet. Its price source is _automatic_ (stocks and ETFs via
+  `TIME_SERIES_DAILY`/Finnhub quote; crypto via Alpha Vantage `DIGITAL_CURRENCY_DAILY` in the instrument's
+  currency, or Finnhub with an exchange symbol like `BINANCE:BTCUSDT`; metals via Alpha Vantage spot rates
+  such as `XAU`) or _manual_ (art, property, coins). Prices the user records live in `data.db`; the newest
+  date wins, and a manual price wins a tie. Instruments and trades can be edited: a buy's quantity can't drop
+  below what's been sold, dates can't cross the sales they're tied to, and a sale's quantity changes by
+  deleting and re-recording it.
 - **Simple asset or liability** — a single balance with a dated history and no assets: positive for something
   owned (savings, a car), negative for something owed (a credit card, a loan).
 - **Deleting** — an account can be deleted once it holds no assets (its balance history goes with it); an
