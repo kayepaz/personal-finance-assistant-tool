@@ -839,7 +839,12 @@ export async function accountsView(nav: Nav): Promise<HTMLElement> {
   return h(
     "section",
     null,
-    h("header", { class: "page-head" }, h("h1", null, "Accounts")),
+    h(
+      "header",
+      { class: "page-head" },
+      h("h1", null, "Accounts"),
+      h("p", { class: "sub" }, link(nav, "/instruments", "Manage instruments")),
+    ),
     details(
       "New account",
       h(
@@ -1822,10 +1827,10 @@ function deleteAssetSection(nav: Nav, a: J, deps: J): HTMLElement {
   );
 }
 
-function instrumentSettings(nav: Nav, inst: J, markets: J): HTMLElement {
+function instrumentSettings(nav: Nav, inst: J, markets: J, title = "Instrument settings"): HTMLElement {
   const editor = instrumentEditor(nav, markets, inst);
   return details(
-    "Instrument settings",
+    title,
     h(
       "form",
       {
@@ -1845,7 +1850,136 @@ function instrumentSettings(nav: Nav, inst: J, markets: J): HTMLElement {
         "Trade prices are recorded in the instrument's currency; changing it doesn't convert them. A new symbol or market starts a fresh price history.",
       ),
       h("button", { type: "submit", class: "primary" }, "Save"),
+      location.pathname === "/instruments"
+        ? null
+        : h("p", { class: "hint" }, link(nav, "/instruments", "All instruments")),
     ),
+  );
+}
+
+// ---------------------------------------------------------------- instruments page
+
+export async function instrumentsView(nav: Nav): Promise<HTMLElement> {
+  const [list, markets] = await Promise.all([get<J[]>("/instruments/overview"), get("/markets")]);
+  const marketLabel = (id: string) => (markets.markets as J[]).find((m) => m.id === id)?.label ?? id;
+  const unused = list.filter((i) => i.assets.length === 0);
+  const editor = instrumentEditor(nav, markets);
+
+  const removeAll = async () => {
+    if (!confirm(`Delete ${unused.length} unused instrument${unused.length === 1 ? "" : "s"}?`)) return;
+    for (const i of unused) await del(`/instruments/${i.id}`);
+    nav.toast(`Deleted ${unused.length} unused instrument${unused.length === 1 ? "" : "s"}.`, "ok");
+    nav.refresh();
+  };
+  const removeOne = async (i: J) => {
+    const extra = i.manual_price_count
+      ? ` Its ${i.manual_price_count} recorded price${i.manual_price_count === 1 ? "" : "s"} go with it.`
+      : "";
+    if (!confirm(`Delete ${i.symbol}?${extra}`)) return;
+    try {
+      await del(`/instruments/${i.id}`);
+      nav.toast(`Deleted ${i.symbol}.`, "ok");
+      nav.refresh();
+    } catch (e) {
+      nav.toast((e as Error).message, "error");
+    }
+  };
+
+  return h(
+    "section",
+    null,
+    h("p", { class: "crumbs" }, link(nav, "/accounts", "Accounts")),
+    h(
+      "header",
+      { class: "page-head" },
+      h("h1", null, "Instruments"),
+      h(
+        "p",
+        { class: "sub" },
+        "The stocks, funds, coins and metals your assets point at. One instrument can be shared by assets in several accounts.",
+      ),
+    ),
+    details(
+      "New instrument",
+      h(
+        "form",
+        {
+          onsubmit: onSubmit(nav, () =>
+            post("/instruments", editor.values()).then((i) => {
+              nav.toast(`Added ${i.symbol}. Add it to an account from the account's page.`, "ok");
+              nav.refresh();
+            })),
+        },
+        editor.el,
+        h("button", { type: "submit", class: "primary" }, "Create instrument"),
+      ),
+    ),
+    unused.length > 1
+      ? h(
+        "p",
+        null,
+        h(
+          "button",
+          { type: "button", class: "danger-button", onclick: removeAll },
+          `Delete all ${unused.length} unused`,
+        ),
+      )
+      : null,
+    list.length
+      ? h(
+        "ul",
+        { class: "list instruments" },
+        list.map((i) =>
+          h(
+            "li",
+            null,
+            h(
+              "div",
+              { class: "inst-main" },
+              h("strong", null, i.symbol),
+              i.name ? h("span", null, ` ${i.name}`) : null,
+              h(
+                "p",
+                { class: "meta" },
+                [
+                  marketLabel(i.market),
+                  KIND_LABELS[i.kind] ?? label(i.kind),
+                  i.currency,
+                  i.price_source === "manual" ? "prices entered by you" : `fetched as ${i.provider_symbol}`,
+                ].join(" · "),
+              ),
+              h(
+                "p",
+                { class: "meta" },
+                i.latest_price
+                  ? `Last price ${fmtNum(i.latest_price.close)} ${i.currency} on ${i.latest_price.date}${
+                    i.latest_price.provider === "manual" ? " (entered)" : ""
+                  }`
+                  : "No price yet",
+              ),
+              i.assets.length
+                ? h(
+                  "p",
+                  { class: "meta" },
+                  "Used by ",
+                  ...i.assets.flatMap((a: J, n: number) => [
+                    n ? ", " : "",
+                    link(nav, `/assets/${a.id}`, a.name),
+                    ` (${a.account_name})`,
+                  ]),
+                )
+                : h("p", { class: "meta warn" }, "Not used by any asset"),
+              instrumentSettings(nav, { ...i, asset_count: i.assets.length }, markets, "Edit"),
+            ),
+            i.assets.length ? null : h(
+              "button",
+              { type: "button", class: "danger-button small", onclick: () => removeOne(i) },
+              "Delete",
+            ),
+          )
+        ),
+      )
+      : empty("No instruments yet. Add one here, or from an account's Add asset form."),
   );
 }
 

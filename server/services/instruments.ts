@@ -3,6 +3,7 @@ import { uuidv7 } from "../lib/ids.ts";
 import { badRequest, conflict, notFound } from "../lib/http.ts";
 import { canonicalSymbol, defaultMarket, getMarket, type Market, MARKETS, METALS } from "./markets.ts";
 import * as v from "../lib/validate.ts";
+import { currentPrice } from "./prices.ts";
 
 export const INSTRUMENT_KINDS = ["equity", "etf", "fund", "crypto", "metal", "other"] as const;
 
@@ -48,6 +49,60 @@ export function deleteManualPrice(db: DB, id: string, date: string): void {
 
 export function listInstruments(db: DB): Row[] {
   return db.prepare("SELECT * FROM instruments ORDER BY symbol, exchange").all();
+}
+
+/** Every instrument with what uses it and its latest known price, for the Instruments page. */
+export function instrumentsOverview(data: DB, cache: DB): Row[] {
+  const used = data.prepare(
+    `SELECT a.id, a.name, a.instrument_id, ac.name AS account_name FROM assets a
+     JOIN accounts ac ON ac.id = a.account_id WHERE a.instrument_id IS NOT NULL ORDER BY ac.name, a.name`,
+  ).all() as Row[];
+  const manualCounts = new Map(
+    (data.prepare("SELECT instrument_id, count(*) AS n FROM manual_prices GROUP BY instrument_id")
+      .all() as Row[])
+      .map((r) => [r.instrument_id as string, Number(r.n)]),
+  );
+  return listInstruments(data).map((i) => {
+    const price = currentPrice(data, cache, i.provider_symbol as string);
+    return {
+      ...i,
+      assets: used.filter((a) => a.instrument_id === i.id).map(({ id, name, account_name }) => ({
+        id,
+        name,
+        account_name,
+      })),
+      manual_price_count: manualCounts.get(i.id as string) ?? 0,
+      latest_price: price ? { date: price.price_date, close: price.close, provider: price.provider } : null,
+    };
+  });
+}
+
+/**
+ * Delete an instrument no asset uses. Its recorded prices go with it; fetched prices in the cache are dropped
+ * too unless another instrument shares the provider symbol.
+ */
+export function deleteInstrument(data: DB, cache: DB, id: string): { manual_prices: number } {
+  const inst = getInstrument(data, id);
+  const sym = inst.provider_symbol as string;
+  const users = data.prepare("SELECT name FROM assets WHERE instrument_id = ? ORDER BY name").all(
+    id,
+  ) as Row[];
+  if (users.length) {
+    throw conflict(
+      `${inst.symbol} is used by ${users.length === 1 ? "an asset" : `${users.length} assets`} ` +
+        `(${users.map((u) => u.name).join(", ")}); delete ${users.length === 1 ? "it" : "them"} first`,
+    );
+  }
+  const manual = Number(
+    (data.prepare("SELECT count(*) AS n FROM manual_prices WHERE instrument_id = ?").get(id) as Row).n,
+  );
+  data.prepare("DELETE FROM instruments WHERE id = ?").run(id); // manual_prices cascade
+  const shared = data.prepare("SELECT 1 FROM instruments WHERE provider_symbol = ?").get(sym);
+  if (!shared) {
+    cache.prepare("DELETE FROM daily_prices WHERE provider_symbol = ?").run(sym);
+    cache.prepare("DELETE FROM deferred_requests WHERE kind = 'daily_price' AND key = ?").run(sym);
+  }
+  return { manual_prices: manual };
 }
 
 export interface InstrumentFields {

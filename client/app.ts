@@ -46,7 +46,8 @@ function shell(content: HTMLElement): HTMLElement {
   const here = location.pathname;
   const active = (
     p: string,
-  ) => (p === "/" ? here === "/" : here.startsWith(p) || (p === "/accounts" && here.startsWith("/assets")));
+  ) => (p === "/" ? here === "/" : here.startsWith(p) ||
+    (p === "/accounts" && (here.startsWith("/assets") || here.startsWith("/instruments"))));
   return h(
     "div",
     { class: "shell" },
@@ -101,6 +102,7 @@ async function render(): Promise<void> {
     else if ((m = path.match(/^\/triggers\/([\w-]+)$/))) view = await views.triggerView(nav, m[1]);
     else if (path === "/reports") view = await views.reportsView(nav);
     else if (path === "/accounts") view = await views.accountsView(nav);
+    else if (path === "/instruments") view = await views.instrumentsView(nav);
     else if ((m = path.match(/^\/accounts\/([\w-]+)$/))) view = await views.accountView(nav, m[1]);
     else if ((m = path.match(/^\/assets\/([\w-]+)$/))) view = await views.assetView(nav, m[1]);
     else if (path === "/settings") view = await views.settingsView(nav, () => nav.go("/"));

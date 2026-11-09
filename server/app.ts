@@ -264,7 +264,9 @@ function buildRouter(opts: AppOptions): Router<State> {
       c.state.fetchFn,
     );
   });
+  r.get("/api/instruments/overview", (c) => instruments.instrumentsOverview(data(c), cache(c)));
   r.get("/api/instruments/:id", (c) => instruments.instrumentDetail(data(c), c.params.id));
+  r.delete("/api/instruments/:id", (c) => instruments.deleteInstrument(data(c), cache(c), c.params.id));
   r.patch(
     "/api/instruments/:id",
     async (c) => instruments.updateInstrument(data(c), c.params.id, await c.body()),

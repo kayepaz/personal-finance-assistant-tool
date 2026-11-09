@@ -920,3 +920,18 @@ fieldset,
   justify-self: start;
   font-size: .88rem;
 }
+.list.instruments > li {
+  display: flex;
+  gap: .75rem;
+  align-items: flex-start;
+}
+.list.instruments .inst-main {
+  flex: 1;
+  min-width: 0;
+}
+.list.instruments .meta {
+  margin: .15rem 0;
+}
+.list.instruments details {
+  margin-top: .35rem;
+}

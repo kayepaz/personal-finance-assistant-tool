@@ -109,6 +109,41 @@ Deno.test("an asset is named after its instrument unless given a name", async ()
   assert.deepEqual([named.name, fallback.name, custom.name], ["Shopify Inc", "AAPL", "RY (TFSA)"]);
 });
 
+Deno.test("instruments page lists usage and deletes only unused instruments", async () => {
+  const { ok, call, dbs } = await setup();
+  const acct = await ok("POST", "/api/accounts", {
+    name: "Brokerage",
+    kind: "self_directed",
+    currency: "CAD",
+  });
+  const shop = await ok("POST", "/api/instruments", { market: "TSX", symbol: "SHOP", name: "Shopify Inc" });
+  const art = await ok("POST", "/api/instruments", { market: "OTHER", symbol: "ART" });
+  await ok("POST", `/api/instruments/${art.id}/prices`, { close: "1500", price_date: "2026-11-01" });
+  dbs.cache.prepare(
+    "INSERT INTO daily_prices(provider_symbol, price_date, close, currency, provider, fetched_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run("SHOP.TRT", "2026-11-06", "201.30", "CAD", "alphavantage", 0);
+  await ok("POST", "/api/assets", { account_id: acct.id, instrument_id: shop.id });
+
+  const list = await ok("GET", "/api/instruments/overview");
+  const bySym = Object.fromEntries(list.map((i: J) => [i.symbol, i]));
+  assert.deepEqual(bySym.SHOP.assets.map((a: J) => [a.name, a.account_name]), [["Shopify Inc", "Brokerage"]]);
+  assert.equal(bySym.SHOP.latest_price.close, "201.30");
+  assert.deepEqual([bySym.ART.assets.length, bySym.ART.manual_price_count, bySym.ART.latest_price.provider], [
+    0,
+    1,
+    "manual",
+  ]);
+
+  const blocked = await call("DELETE", `/api/instruments/${shop.id}`);
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.body.error, /Shopify Inc/);
+
+  const gone = await ok("DELETE", `/api/instruments/${art.id}`);
+  assert.equal(gone.manual_prices, 1);
+  assert.equal((await ok("GET", "/api/instruments/overview")).length, 1);
+  assert.equal(dbs.data.prepare("SELECT count(*) AS n FROM manual_prices").get()!.n, 0);
+});
+
 Deno.test("check symbol fetches one price; Finnhub is skipped outside the US", async () => {
   const hosts: string[] = [];
   const fakeFetch = ((input: string | URL) => {

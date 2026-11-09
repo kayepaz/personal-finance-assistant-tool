@@ -141,6 +141,24 @@ test("investing: a thesis with a shared trigger fires and can be adjusted", asyn
   await expect(page.getByText("Gold is volatile")).toBeVisible();
 });
 
+test("instruments: list usage and delete an unused one", async () => {
+  await nav("Accounts").click();
+  await page.click("text=Manage instruments");
+  await expect(page.getByRole("heading", { name: "Instruments" })).toBeVisible();
+  const maple = page.locator(".list.instruments > li", { hasText: "MAPLE" });
+  await expect(maple).toContainText("Used by");
+  await expect(maple.getByRole("button", { name: "Delete" })).toHaveCount(0);
+
+  await open("New instrument");
+  await page.selectOption("select[name=inst_market]", "OTHER");
+  await page.fill("input[name=inst_symbol]", "OLDART");
+  await page.click("button:has-text('Create instrument')");
+  const old = page.locator(".list.instruments > li", { hasText: "OLDART" });
+  await expect(old).toContainText("Not used by any asset");
+  await old.getByRole("button", { name: "Delete" }).click();
+  await expect(page.locator(".list.instruments > li", { hasText: "OLDART" })).toHaveCount(0);
+});
+
 test("real estate: value is houses minus mortgages", async () => {
   await nav("Accounts").click();
   await open("New account");

@@ -28,7 +28,12 @@ version is tagged in git (`v0.1.0` …) with a matching GitHub release.
 ### Fixed (layout)
 
 - Forms with long dropdowns no longer push the page wider than a phone screen.
-- `GET /api/markets` and `POST /api/instruments/check`.
+- **Instruments page** (Accounts → Manage instruments): every instrument with its market, last price and the
+  assets that use it; edit any of them, add one without an asset, and delete unused ones (singly or all at
+  once). An instrument still used by an asset can't be deleted. Deleting removes its recorded prices and,
+  unless another instrument shares the provider symbol, its cached prices.
+- `GET /api/markets`, `POST /api/instruments/check`, `GET /api/instruments/overview`,
+  `DELETE /api/instruments/:id`.
 
 ### Fixed
 
