@@ -37,7 +37,8 @@ calculated.
   and the provider symbol sent to price providers. The market sets the type choices, default currency and
   provider symbol (Alpha Vantage suffixes: TSX `.TRT`, TSX Venture `.TRV`, London `.LON`, Xetra `.DEX`, Bombay
   `.BSE`, Shanghai `.SHH`, Shenzhen `.SHZ`); an Advanced override covers odd cases. Finnhub's free plan only
-  quotes US stocks, so it is skipped for other markets. "Check symbol" fetches one price before saving. London
+  quotes US stocks, so it is skipped for other markets. "Check symbol" fetches one price before saving and
+  suggests a name (Finnhub company profile for US stocks, Alpha Vantage symbol search elsewhere). London
   prices arrive in pence (GBX) and are not converted yet. Its price source is _automatic_ (stocks and ETFs via
   `TIME_SERIES_DAILY`/Finnhub quote; crypto via Alpha Vantage `DIGITAL_CURRENCY_DAILY` in the instrument's
   currency, or Finnhub with an exchange symbol like `BINANCE:BTCUSDT`; metals via Alpha Vantage spot rates

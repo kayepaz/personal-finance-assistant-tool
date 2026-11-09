@@ -94,6 +94,29 @@ Deno.test("check symbol fetches one price; Finnhub is skipped outside the US", a
   const fakeFetch = ((input: string | URL) => {
     const url = new URL(String(input));
     hosts.push(`${url.hostname} ${url.searchParams.get("symbol")}`);
+    if (url.searchParams.get("from_currency") === "XAG") {
+      return Promise.resolve(Response.json({
+        "Realtime Currency Exchange Rate": {
+          "5. Exchange Rate": "44.10",
+          "6. Last Refreshed": "2026-11-06 20:00:00",
+        },
+      }));
+    }
+    if (url.searchParams.get("function") === "SYMBOL_SEARCH") {
+      hosts.push(`search ${url.searchParams.get("keywords")}`);
+      return Promise.resolve(Response.json({
+        bestMatches: [
+          { "1. symbol": "SHOP", "2. name": "Shopify Inc (US listing)" },
+          { "1. symbol": "SHOP.TRT", "2. name": "Shopify Inc" },
+        ],
+      }));
+    }
+    if (url.hostname === "finnhub.io" && url.pathname.endsWith("/profile2")) {
+      return Promise.resolve(Response.json({ name: "Apple Inc" }));
+    }
+    if (url.hostname === "finnhub.io" && url.searchParams.get("symbol") === "AAPL") {
+      return Promise.resolve(Response.json({ c: 270.1, t: 1762473600 }));
+    }
     if (url.hostname === "www.alphavantage.co" && url.searchParams.get("symbol") === "SHOP.TRT") {
       return Promise.resolve(
         Response.json({ "Time Series (Daily)": { "2026-11-06": { "4. close": "201.30" } } }),
@@ -113,12 +136,23 @@ Deno.test("check symbol fetches one price; Finnhub is skipped outside the US", a
   await ok("POST", "/api/providers/alphavantage", { api_key: "AV", consent: true });
   await ok("POST", "/api/providers/finnhub", { api_key: "FH", consent: true });
   const good = await ok("POST", "/api/instruments/check", { market: "TSX", symbol: "SHOP" });
-  assert.deepEqual([good.ok, good.provider, good.price, good.provider_symbol], [
+  assert.deepEqual([good.ok, good.provider, good.price, good.provider_symbol, good.name], [
     true,
     "Alpha Vantage",
     "201.30",
     "SHOP.TRT",
+    "Shopify Inc",
   ]);
+  assert.ok(hosts.includes("search SHOP"), "the name search sends the bare ticker");
+
+  const metal = await ok("POST", "/api/instruments/check", { market: "METAL", symbol: "XAG" });
+  assert.equal(metal.name, "Silver");
+
+  // US: Alpha Vantage has no price here, Finnhub prices it and names it (sparing Alpha Vantage's daily calls).
+  const searches = hosts.filter((h) => h.startsWith("search")).length;
+  const us = await ok("POST", "/api/instruments/check", { market: "US", symbol: "AAPL" });
+  assert.deepEqual([us.ok, us.provider, us.name], [true, "Finnhub", "Apple Inc"]);
+  assert.equal(hosts.filter((h) => h.startsWith("search")).length, searches, "no Alpha Vantage name search");
 
   const bad = await ok("POST", "/api/instruments/check", { market: "TSX", symbol: "NOPE" });
   assert.equal(bad.ok, false);
@@ -127,7 +161,7 @@ Deno.test("check symbol fetches one price; Finnhub is skipped outside the US", a
     "doesn't cover this market (free plan)",
   ]);
   assert.ok(
-    !hosts.some((h) => h.startsWith("finnhub.io")),
+    !hosts.some((h) => h.startsWith("finnhub.io") && !h.endsWith("AAPL")),
     "Finnhub's free plan isn't asked for TSX symbols",
   );
   assert.equal(

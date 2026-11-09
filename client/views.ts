@@ -1889,10 +1889,17 @@ function instrumentEditor(nav: Nav, data: J, current: J = {}): { el: HTMLElement
   let currencyTouched = !!current.id; // an existing instrument keeps its currency; a new one follows the market
   currencyInput.addEventListener("input", () => (currencyTouched = true));
 
-  const symbolField = field("Symbol", symbolInput);
-  const metalField = field("Metal", metalSel);
   const kindField = field("Type", kindSel);
   const checkBtn = h("button", { type: "button" }, "Check symbol");
+  // One row for whichever control names the asset (ticker box or metal list), with Check symbol beside it.
+  const symbolField = field(
+    "Symbol",
+    h("div", { class: "input-with-button" }, symbolInput, metalSel, checkBtn),
+  );
+  const symbolLabel = symbolField.querySelector(".field-label")!;
+  let nameAuto = !nameInput.value; // fill the name from Check symbol until the user types their own
+  let filledName = ""; // the name Check symbol last filled in; cleared when the symbol or market changes
+  nameInput.addEventListener("input", () => (nameAuto = nameInput.value.trim() === ""));
 
   function canonical(m: J, sym: string): string {
     const s = sym.trim().toUpperCase();
@@ -1906,8 +1913,9 @@ function instrumentEditor(nav: Nav, data: J, current: J = {}): { el: HTMLElement
 
   function refresh(marketChanged: boolean) {
     const m = byId(marketSel.value);
-    symbolField.hidden = m.id === "METAL";
-    metalField.hidden = m.id !== "METAL";
+    symbolInput.hidden = m.id === "METAL";
+    metalSel.hidden = m.id !== "METAL";
+    symbolLabel.textContent = m.id === "METAL" ? "Metal" : "Symbol";
     const kinds = m.kinds as string[];
     const keep = kindSel.value || current.kind;
     kindSel.replaceChildren(
@@ -1943,6 +1951,8 @@ function instrumentEditor(nav: Nav, data: J, current: J = {}): { el: HTMLElement
       : `Prices from ${providers.join(" or ")}.`;
     checkBtn.hidden = manual;
     checkResult.textContent = "";
+    checkResult.hidden = true;
+    if (filledName && nameInput.value === filledName) nameInput.value = filledName = "";
   }
   marketSel.addEventListener("change", () => refresh(true));
   for (const el of [symbolInput, metalSel, overrideInput, manualBox]) {
@@ -1955,10 +1965,12 @@ function instrumentEditor(nav: Nav, data: J, current: J = {}): { el: HTMLElement
     checkBtn.setAttribute("disabled", "");
     checkResult.className = "check-result";
     checkResult.textContent = "Checking…";
+    checkResult.hidden = false;
     try {
       const r = await post("/instruments/check", values());
       if (r.ok) {
         checkResult.className = "check-result ok";
+        if (r.name && nameAuto) nameInput.value = filledName = r.name;
         checkResult.textContent = `✓ ${r.provider_symbol}: ${
           fmtNum(r.price)
         } ${currencyInput.value.toUpperCase()} on ${r.date} (${r.provider}).`;
@@ -1995,12 +2007,11 @@ function instrumentEditor(nav: Nav, data: J, current: J = {}): { el: HTMLElement
     field("Market", marketSel),
     note,
     symbolField,
-    metalField,
+    checkResult,
     field("Name", nameInput),
     kindField,
     field("Currency", currencyInput),
     hint,
-    h("div", { class: "row-form" }, checkBtn, checkResult),
     details(
       "Advanced",
       field(

@@ -884,3 +884,29 @@ input[name=inst_override],
 input[name=inst_currency] {
   text-transform: uppercase;
 }
+.input-with-button {
+  display: flex;
+  gap: .5rem;
+  align-items: stretch;
+}
+.input-with-button > input,
+.input-with-button > select {
+  flex: 1;
+  min-width: 0;
+}
+.input-with-button > button {
+  white-space: nowrap;
+}
+.check-result {
+  margin: -.4rem 0 .6rem;
+}
+fieldset,
+.subfields,
+.field {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+.field > select,
+.field > input {
+  max-width: 100%;
+}

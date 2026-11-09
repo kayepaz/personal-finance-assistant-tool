@@ -8,12 +8,15 @@ import { isDecimal } from "../lib/decimal.ts";
 import { isIsoDate } from "../lib/dates.ts";
 import { badRequest } from "../lib/http.ts";
 import { PURPOSE_HEADER } from "./netlog.ts";
+import { METALS } from "./markets.ts";
 
 export class QuotaExceeded extends Error {}
 
 export interface DailyClose {
   date: string;
   close: string;
+  /** Some responses name the asset too (Alpha Vantage crypto); saves a separate lookup. */
+  name?: string;
 }
 
 /** What a provider needs to know about the thing being priced. */
@@ -33,6 +36,8 @@ export interface PriceProvider {
   /** Whether this provider can price the request at all (checked before using a call from the daily limit). */
   covers(req: PriceRequest): boolean;
   fetchLatestClose(req: PriceRequest, apiKey: string, fetchFn: typeof fetch): Promise<DailyClose | null>;
+  /** Company or asset name for a symbol, used to fill in the form after "Check symbol". Optional per provider. */
+  lookupName?(req: PriceRequest, apiKey: string, fetchFn: typeof fetch): Promise<string | null>;
 }
 
 const numToDec = (n: unknown): string | null => {
@@ -84,7 +89,28 @@ export const alphaVantage: PriceProvider = {
     // Crypto responses have used both "4. close" and "4a. close (USD)".
     const closeKey = Object.keys(day).find((k) => /^4a?\. close/.test(k));
     const close = closeKey ? numToDec(day[closeKey]) : null;
-    return close ? { date: latest, close } : null;
+    if (!close) return null;
+    const name = String(body["Meta Data"]?.["3. Digital Currency Name"] ?? "").trim();
+    return name ? { date: latest, close, name } : { date: latest, close };
+  },
+  async lookupName(req, apiKey, fetchFn) {
+    if (req.kind === "crypto" || req.kind === "metal") return null;
+    // SYMBOL_SEARCH matches on the bare ticker; keep only the exact provider symbol (e.g. SHOP.TRT).
+    const bare = req.symbol.replace(/\.[A-Z]+$/, "");
+    const url = new URL("https://www.alphavantage.co/query");
+    url.search = new URLSearchParams({ function: "SYMBOL_SEARCH", keywords: bare, apikey: apiKey })
+      .toString();
+    const res = await fetchFn(url, { headers: { [PURPOSE_HEADER]: `Name · ${req.symbol} · Alpha Vantage` } });
+    if (!res.ok) return null;
+    const body = await res.json();
+    if (body.Note || body.Information) {
+      const msg = String(body.Note ?? body.Information);
+      if (/rate limit|requests per day|call frequency|premium/i.test(msg)) throw new QuotaExceeded(msg);
+      return null;
+    }
+    const matches = (body.bestMatches ?? []) as Record<string, string>[];
+    const hit = matches.find((m) => String(m["1. symbol"] ?? "").toUpperCase() === req.symbol.toUpperCase());
+    return hit?.["2. name"]?.trim() || null;
   },
 };
 
@@ -108,6 +134,16 @@ export const finnhub: PriceProvider = {
     const close = numToDec(body.c);
     if (!close || close === "0" || typeof body.t !== "number" || body.t === 0) return null; // unknown symbol
     return { date: new Date(body.t * 1000).toISOString().slice(0, 10), close };
+  },
+  async lookupName(req, apiKey, fetchFn) {
+    if (req.kind === "crypto" || req.kind === "metal") return null;
+    const url = new URL("https://finnhub.io/api/v1/stock/profile2");
+    url.search = new URLSearchParams({ symbol: req.symbol, token: apiKey }).toString();
+    const res = await fetchFn(url, { headers: { [PURPOSE_HEADER]: `Name · ${req.symbol} · Finnhub` } });
+    if (res.status === 429) throw new QuotaExceeded("Finnhub rate limit");
+    if (!res.ok) return null;
+    const body = await res.json();
+    return typeof body.name === "string" && body.name.trim() ? body.name.trim() : null;
   },
 };
 
@@ -351,7 +387,42 @@ export interface CheckResult {
   provider?: string;
   price?: string;
   date?: string;
+  /** Suggested name for the form; absent when no provider could name it. */
+  name?: string;
   tried: { provider: string; result: string }[];
+}
+
+/**
+ * Ask the switched-on providers for a symbol's name, Finnhub first (its limit is per minute, so it doesn't use
+ * one of Alpha Vantage's 25 daily calls). Best effort: failures just leave the name blank.
+ */
+async function lookupName(
+  data: DB,
+  cache: DB,
+  req: PriceRequest,
+  utcDay: string,
+  fetchFn: typeof fetch,
+): Promise<string | null> {
+  if (req.kind === "metal") {
+    return METALS.find((m) => m.code === req.symbol)?.name ?? null;
+  }
+  for (const p of [finnhub, alphaVantage]) {
+    if (!p.lookupName || !p.covers(req)) continue;
+    const key = getSetting(data, `api_key:${p.id}`);
+    if (!key || !hasConsent(data, `market_data:${p.id}`)) continue;
+    const u = usage(cache, p.id, utcDay);
+    if (u.exhausted || u.calls >= p.dailyLimit) continue;
+    try {
+      countCall(cache, p.id, utcDay);
+      const name = await p.lookupName(req, key, fetchFn);
+      if (name) return name;
+    } catch (err) {
+      if (err instanceof QuotaExceeded) {
+        cache.prepare("UPDATE api_usage SET exhausted = 1 WHERE provider = ? AND day = ?").run(p.id, utcDay);
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -390,7 +461,15 @@ export async function checkSymbol(
         continue;
       }
       storePrice(cache, req.symbol, close, req.currency, p.id);
-      return { ...result, ok: true, provider: p.name, price: close.close, date: close.date };
+      const name = close.name ?? await lookupName(data, cache, req, utcDay, fetchFn);
+      return {
+        ...result,
+        ok: true,
+        provider: p.name,
+        price: close.close,
+        date: close.date,
+        ...(name ? { name } : {}),
+      };
     } catch (err) {
       if (err instanceof QuotaExceeded) {
         cache.prepare("UPDATE api_usage SET exhausted = 1 WHERE provider = ? AND day = ?").run(p.id, utcDay);

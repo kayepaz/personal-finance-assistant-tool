@@ -59,6 +59,25 @@ test("investing: a thesis with a shared trigger fires and can be adjusted", asyn
   await open("Add asset");
   await page.selectOption("select[name=instrument_id]", "__new");
   await expect(page.locator(".provider-hint")).toContainText("from Alpha Vantage or Finnhub");
+  // Check symbol fills in the name (the server's provider call is stubbed here; no keys in tests).
+  await page.route("**/api/instruments/check", (r) =>
+    r.fulfill({
+      json: {
+        ok: true,
+        provider_symbol: "AAPL",
+        provider: "Finnhub",
+        price: "270.10",
+        date: "2026-11-06",
+        name: "Apple Inc",
+        tried: [],
+      },
+    }));
+  await page.fill("input[name=inst_symbol]", "aapl");
+  await page.click("button:has-text('Check symbol')");
+  await expect(page.locator(".check-result")).toContainText("✓ AAPL");
+  await expect(page.locator("input[name=inst_name]")).toHaveValue("Apple Inc");
+  await page.unroute("**/api/instruments/check");
+  await page.fill("input[name=inst_name]", "");
   await page.selectOption("select[name=inst_market]", "OTHER");
   await expect(page.locator(".provider-hint")).toContainText("record them yourself");
   await page.fill("input[name=inst_symbol]", "maple");

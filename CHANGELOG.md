@@ -17,7 +17,14 @@ version is tagged in git (`v0.1.0` …) with a matching GitHub release.
 
 ### Added
 
-- **Check symbol** button: fetches one price and shows the result, or what each provider said.
+- **Check symbol** button beside the symbol box: fetches one price and shows the result, or what each provider
+  said, and fills in the name if it's blank. Names come from Finnhub's company profile for US stocks, Alpha
+  Vantage's symbol search elsewhere (one extra call from its 25 a day), the crypto price response, or the
+  metal list.
+
+### Fixed (layout)
+
+- Forms with long dropdowns no longer push the page wider than a phone screen.
 - `GET /api/markets` and `POST /api/instruments/check`.
 
 ### Fixed
