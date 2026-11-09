@@ -921,10 +921,37 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
   ]);
   const editor = instrumentEditor(nav, markets);
   const newInstrument = h("fieldset", { hidden: true }, h("legend", null, "New instrument"), editor.el);
-  instrumentPicker.addEventListener(
-    "change",
-    () => (newInstrument.hidden = instrumentPicker.value !== "__new"),
+  // An asset with an instrument is named after it (e.g. "Shopify Inc"); only assets without one need a name.
+  const assetName = input("name", { placeholder: "e.g. Main St house" });
+  const nameField = field("Name", assetName);
+  const renameLink = h(
+    "button",
+    { type: "button", class: "link-button" },
+    "Use a different name for this asset",
   );
+  const syncAssetForm = () => {
+    const v = instrumentPicker.value;
+    newInstrument.hidden = v !== "__new";
+    const hasInstrument = v !== "";
+    if (tradeable && !hasInstrument) {
+      // Self-directed: pick an instrument first; the name follows from it.
+      nameField.hidden = renameLink.hidden = true;
+      assetName.required = false;
+      return;
+    }
+    if (!hasInstrument) nameField.hidden = false;
+    else if (!assetName.value) nameField.hidden = true;
+    renameLink.hidden = !hasInstrument || !nameField.hidden;
+    assetName.required = !hasInstrument;
+    assetName.placeholder = hasInstrument ? "defaults to the instrument's name" : "e.g. Main St house";
+  };
+  renameLink.addEventListener("click", () => {
+    nameField.hidden = false;
+    renameLink.hidden = true;
+    assetName.focus();
+  });
+  instrumentPicker.addEventListener("change", syncAssetForm);
+  syncAssetForm();
 
   return h(
     "section",
@@ -1050,6 +1077,7 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
                 "li",
                 null,
                 link(nav, `/assets/${x.id}`, h("strong", null, x.name)),
+                x.symbol && x.symbol !== x.name ? h("span", { class: "meta" }, x.symbol) : null,
                 h(
                   "span",
                   { class: "meta" },
@@ -1082,10 +1110,8 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
             },
             field("Instrument", instrumentPicker),
             newInstrument,
-            field(
-              "Name",
-              input("name", { placeholder: tradeable ? "defaults to the symbol" : "e.g. Main St house" }),
-            ),
+            nameField,
+            renameLink,
             h("button", { type: "submit", class: "primary" }, "Add asset"),
           ),
         ),

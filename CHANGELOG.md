@@ -12,6 +12,9 @@ version is tagged in git (`v0.1.0` …) with a matching GitHub release.
   symbol sent to price providers, and a line under the form shows exactly what will be fetched and from where.
   Metals are picked from a list. Provider symbol and "I'll enter prices" moved to a collapsed Advanced
   section. The same editor is used for Instrument settings on the asset page.
+- Add asset has one Name box instead of two: an asset with an instrument takes the instrument's name (or its
+  symbol if it has none), with a "Use a different name for this asset" link for a custom label. Holdings lists
+  show the symbol beside the name.
 - Background price refresh skips Finnhub for markets its free plan doesn't cover, so it no longer spends a
   call or masks Alpha Vantage's daily-limit deferral.
 

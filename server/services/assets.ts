@@ -87,7 +87,7 @@ export function createAsset(db: DB, body: Obj, todayStr?: string): Row {
     id,
     accountId,
     instrument?.id as string ?? null,
-    name || (instrument!.symbol as string),
+    name || (instrument!.name as string) || (instrument!.symbol as string),
     tracking,
     notes,
     now,

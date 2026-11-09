@@ -89,6 +89,26 @@ Deno.test("instruments take defaults from their market and are validated against
   assert.equal(renamed.provider_symbol, "BRK-B.TRT", "a name change keeps the override");
 });
 
+Deno.test("an asset is named after its instrument unless given a name", async () => {
+  const { ok } = await setup();
+  const acct = await ok("POST", "/api/accounts", {
+    name: "Brokerage",
+    kind: "self_directed",
+    currency: "CAD",
+  });
+  const shop = await ok("POST", "/api/instruments", { market: "TSX", symbol: "SHOP", name: "Shopify Inc" });
+  const bare = await ok("POST", "/api/instruments", { market: "US", symbol: "AAPL" });
+  const ry = await ok("POST", "/api/instruments", { market: "TSX", symbol: "RY", name: "Royal Bank" });
+  const named = await ok("POST", "/api/assets", { account_id: acct.id, instrument_id: shop.id });
+  const fallback = await ok("POST", "/api/assets", { account_id: acct.id, instrument_id: bare.id });
+  const custom = await ok("POST", "/api/assets", {
+    account_id: acct.id,
+    instrument_id: ry.id,
+    name: "RY (TFSA)",
+  });
+  assert.deepEqual([named.name, fallback.name, custom.name], ["Shopify Inc", "AAPL", "RY (TFSA)"]);
+});
+
 Deno.test("check symbol fetches one price; Finnhub is skipped outside the US", async () => {
   const hosts: string[] = [];
   const fakeFetch = ((input: string | URL) => {
