@@ -15,6 +15,10 @@ version is tagged in git (`v0.1.0` …) with a matching GitHub release.
 - Add asset has one Name box instead of two: an asset with an instrument takes the instrument's name (or its
   symbol if it has none), with a "Use a different name for this asset" link for a custom label. Holdings lists
   show the symbol beside the name.
+- Self-directed account pages show each holding's current value (quantity × latest price, converted to the
+  account currency), a **Total assets** figure under the list, and the account's **Total value** (cash +
+  assets) beside the title. The Accounts list shows every account's current value, with the base-currency
+  equivalent for foreign-currency accounts and owed balances in red.
 - Background price refresh skips Finnhub for markets its free plan doesn't cover, so it no longer spends a
   call or masks Alpha Vantage's daily-limit deferral.
 

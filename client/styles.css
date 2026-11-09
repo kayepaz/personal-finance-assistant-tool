@@ -935,3 +935,46 @@ fieldset,
 .list.instruments details {
   margin-top: .35rem;
 }
+.page-head.with-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: .5rem 1.5rem;
+}
+.head-total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+}
+.amount {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.big-num.owed {
+  color: var(--danger);
+}
+.assets-total {
+  margin-top: .75rem;
+  padding-top: .75rem;
+  border-top: 2px solid var(--line);
+}
+.assets-total h3 {
+  margin: 0 0 .2rem;
+  font-size: .95rem;
+}
+.warn-list {
+  margin: .3rem 0 0;
+  padding-left: 1.1rem;
+}
+@media (max-width: 560px) {
+  .head-total {
+    align-items: flex-start;
+    text-align: left;
+  }
+}
+.assets-total + details {
+  margin-top: 1rem;
+}

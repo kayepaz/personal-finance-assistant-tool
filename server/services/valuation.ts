@@ -21,6 +21,8 @@ export interface Holding {
   price: string | null;
   price_date: string | null;
   value_native: string;
+  /** In the account's currency; null when there's no exchange rate. */
+  value_account: string | null;
   value_base: string | null;
   priced: boolean;
 }
@@ -38,6 +40,8 @@ export interface AccountValue {
   stale: boolean;
   warnings: string[];
   holdings: Holding[];
+  /** Self-directed: holdings' total in the account currency (null if one couldn't be converted). */
+  holdings_native: string | null;
   cash_native: string | null;
   /** Real estate: each house (positive) and mortgage (negative). */
   items: {
@@ -66,6 +70,7 @@ function valueSelfDirected(data: DB, cache: DB, a: Row, base: string, todayStr: 
   ).all(a.id as string);
   let totalBase = "0";
   let totalNative = "0";
+  let holdingsNative: string | null = "0";
   let ok = true;
   for (const asset of assets) {
     const open = openBuys(data, asset.id as string);
@@ -91,6 +96,9 @@ function valueSelfDirected(data: DB, cache: DB, a: Row, base: string, todayStr: 
       out.warnings.push(`${asset.name}: no ${cur}→${base} exchange rate`);
     } else totalBase = d.add(totalBase, inBase);
     if (inAccount !== undefined) totalNative = d.add(totalNative, inAccount);
+    holdingsNative = inAccount === undefined || holdingsNative === null
+      ? null
+      : d.add(holdingsNative, inAccount);
     out.holdings.push({
       asset_id: asset.id as string,
       name: asset.name as string,
@@ -99,6 +107,7 @@ function valueSelfDirected(data: DB, cache: DB, a: Row, base: string, todayStr: 
       price: (p?.close as string) ?? null,
       price_date: (p?.price_date as string) ?? null,
       value_native: r2(native),
+      value_account: inAccount === undefined ? null : r2(inAccount),
       value_base: inBase === undefined ? null : r2(inBase),
       priced: !!p,
     });
@@ -115,6 +124,7 @@ function valueSelfDirected(data: DB, cache: DB, a: Row, base: string, todayStr: 
     } else totalBase = d.add(totalBase, cashBase);
     checkStale(out, a, cash.as_of as string, todayStr);
   }
+  out.holdings_native = holdingsNative === null ? null : r2(holdingsNative);
   out.value_native = r2(totalNative);
   out.value_base = ok ? r2(totalBase) : null;
   return out;
@@ -190,6 +200,7 @@ function blank(a: Row): AccountValue {
     stale: false,
     warnings: [],
     holdings: [],
+    holdings_native: null,
     cash_native: null,
     items: [],
   };
@@ -203,16 +214,30 @@ function checkStale(out: AccountValue, a: Row, asOf: string, todayStr: string) {
   }
 }
 
+function valueOne(data: DB, cache: DB, a: Row, base: string, todayStr: string): AccountValue {
+  return a.kind === "self_directed"
+    ? valueSelfDirected(data, cache, a, base, todayStr)
+    : a.kind === "real_estate"
+    ? valueRealEstate(data, cache, a, base, todayStr)
+    : valueBySnapshot(data, cache, a, base, todayStr);
+}
+
+/**
+ * Current value of one account (archived ones too), signed: negative means owed. For account pages and the
+ * account list; the balance sheet presents negatives as liabilities instead.
+ */
+export function accountValue(data: DB, cache: DB, accountId: string, todayStr: string): AccountValue & {
+  base_currency: string;
+} {
+  const base = getSetting(data, "base_currency") ?? "CAD";
+  const a = data.prepare("SELECT * FROM accounts WHERE id = ?").get(accountId) as Row;
+  return { ...valueOne(data, cache, a, base, todayStr), base_currency: base };
+}
+
 export function balanceSheet(data: DB, cache: DB, todayStr: string): BalanceSheet {
   const base = getSetting(data, "base_currency") ?? "CAD";
   const accounts = data.prepare("SELECT * FROM accounts WHERE archived_at IS NULL ORDER BY name").all();
-  const values = accounts.map((a) =>
-    a.kind === "self_directed"
-      ? valueSelfDirected(data, cache, a, base, todayStr)
-      : a.kind === "real_estate"
-      ? valueRealEstate(data, cache, a, base, todayStr)
-      : valueBySnapshot(data, cache, a, base, todayStr)
-  );
+  const values = accounts.map((a) => valueOne(data, cache, a, base, todayStr));
   let assets = "0", liabilities = "0";
   const warnings: string[] = [];
   for (const v of values) {

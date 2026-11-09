@@ -886,13 +886,42 @@ export async function accountsView(nav: Nav): Promise<HTMLElement> {
           h(
             "li",
             null,
-            link(nav, `/accounts/${a.id}`, h("strong", null, a.name)),
             h(
-              "span",
-              { class: "meta" },
-              `${ACCOUNT_KINDS.find(([k]) => k === a.kind)?.[1]} · ${a.currency}${
-                a.tags.length ? ` · ${a.tags.join(", ")}` : ""
-              }`,
+              "div",
+              { class: "re-row" },
+              h(
+                "div",
+                null,
+                link(nav, `/accounts/${a.id}`, h("strong", null, a.name)),
+                h(
+                  "span",
+                  { class: "meta" },
+                  `${ACCOUNT_KINDS.find(([k]) => k === a.kind)?.[1]} · ${a.currency}${
+                    a.tags.length ? ` · ${a.tags.join(", ")}` : ""
+                  }`,
+                ),
+              ),
+              h(
+                "div",
+                { class: "amount" },
+                h(
+                  "span",
+                  {
+                    class: `big-num${
+                      a.value.native !== null && a.value.native.startsWith("-") ? " owed" : ""
+                    }`,
+                  },
+                  a.value.native === null ? "—" : `${fmtMoney(a.value.native)} ${a.currency}`,
+                ),
+                a.value.native !== null && a.currency !== a.value.base_currency && a.value.base !== null
+                  ? h("span", { class: "meta" }, `≈ ${fmtMoney(a.value.base)} ${a.value.base_currency}`)
+                  : null,
+                a.value.native === null
+                  ? h("span", { class: "meta" }, a.value.warnings.at(-1) ?? "No value yet")
+                  : a.value.stale
+                  ? h("span", { class: "meta warn" }, "Needs an update")
+                  : null,
+              ),
             ),
           )
         ),
@@ -911,6 +940,8 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
   a.dependents = deps;
   if (a.kind === "real_estate") return realEstateView(nav, a);
   const tradeable = a.kind === "self_directed";
+  const val = a.valuation as J;
+  const holdingFor = (assetId: string) => (val.holdings as J[]).find((x) => x.asset_id === assetId);
   const lastValue = a.snapshots.find((s: J) => s.kind === "value");
   const lastCash = a.snapshots.find((s: J) => s.kind === "cash");
 
@@ -964,15 +995,32 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
     h("p", { class: "crumbs" }, link(nav, "/accounts", "Accounts")),
     h(
       "header",
-      { class: "page-head" },
-      h("h1", null, a.name),
+      { class: "page-head with-total" },
       h(
-        "p",
-        { class: "sub" },
-        `${ACCOUNT_KINDS.find(([k]) => k === a.kind)?.[1]} · ${a.currency}${
-          a.tags.length ? ` · ${a.tags.join(", ")}` : ""
-        }`,
+        "div",
+        null,
+        h("h1", null, a.name),
+        h(
+          "p",
+          { class: "sub" },
+          `${ACCOUNT_KINDS.find(([k]) => k === a.kind)?.[1]} · ${a.currency}${
+            a.tags.length ? ` · ${a.tags.join(", ")}` : ""
+          }`,
+        ),
       ),
+      tradeable
+        ? h(
+          "div",
+          { class: "head-total" },
+          h("span", { class: "meta" }, "Total value"),
+          h("span", { class: "big" }, fmtMoney(val.value_native), " ", a.currency),
+          h(
+            "span",
+            { class: "meta" },
+            `Cash ${fmtMoney(val.cash_native ?? "0")} + assets ${fmtMoney(val.holdings_native)}`,
+          ),
+        )
+        : null,
     ),
     a.notes ? h("div", { class: "panel" }, h("h2", null, "Notes"), h("p", null, a.notes)) : null,
     h(
@@ -989,7 +1037,7 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
             "Positive for something you own (savings, a car). Negative for something you owe (a credit card, a loan) — it then counts as a liability.",
           )
           : null,
-        h("p", { class: "big" }, fmtNum((tradeable ? lastCash : lastValue)?.amount, 2), " ", a.currency),
+        h("p", { class: "big" }, fmtMoney((tradeable ? lastCash : lastValue)?.amount), " ", a.currency),
         h(
           "p",
           { class: "meta" },
@@ -1077,23 +1125,70 @@ export async function accountView(nav: Nav, id: string): Promise<HTMLElement> {
           ? h(
             "ul",
             { class: "list" },
-            a.assets.map((x: J) =>
-              h(
+            a.assets.map((x: J) => {
+              const hv = x.tracking === "trades" ? holdingFor(x.id) : undefined;
+              return h(
                 "li",
                 null,
-                link(nav, `/assets/${x.id}`, h("strong", null, x.name)),
-                x.symbol && x.symbol !== x.name ? h("span", { class: "meta" }, x.symbol) : null,
                 h(
-                  "span",
-                  { class: "meta" },
-                  x.tracking === "trades"
-                    ? `${fmtNum(x.quantity)} held · avg cost ${fmtNum(x.average_cost)}`
-                    : "Value-tracked",
+                  "div",
+                  { class: "re-row" },
+                  h(
+                    "div",
+                    null,
+                    link(nav, `/assets/${x.id}`, h("strong", null, x.name)),
+                    x.symbol && x.symbol !== x.name ? h("span", { class: "meta" }, x.symbol) : null,
+                    h(
+                      "span",
+                      { class: "meta" },
+                      x.tracking !== "trades"
+                        ? "Value-tracked"
+                        : !hv
+                        ? "None held"
+                        : `${fmtNum(x.quantity)} × ${
+                          hv.priced
+                            ? `${fmtNum(hv.price)} ${hv.currency} (${hv.price_date})`
+                            : "cost (no price yet)"
+                        }`,
+                    ),
+                  ),
+                  hv
+                    ? h(
+                      "div",
+                      { class: "amount" },
+                      hv.value_account === null ? "—" : `${fmtMoney(hv.value_account)} ${a.currency}`,
+                      hv.currency !== a.currency
+                        ? h("span", { class: "meta" }, `${fmtMoney(hv.value_native)} ${hv.currency}`)
+                        : null,
+                    )
+                    : null,
                 ),
-              )
-            ),
+              );
+            }),
           )
           : empty("No assets yet."),
+        tradeable && a.assets.length
+          ? h(
+            "div",
+            { class: "assets-total" },
+            h("h3", null, "Total assets"),
+            h(
+              "p",
+              { class: "big" },
+              val.holdings_native === null ? "—" : fmtMoney(val.holdings_native),
+              " ",
+              a.currency,
+            ),
+            (val.warnings as string[]).filter((w) => !w.startsWith("Cash") && !w.startsWith("Balance")).length
+              ? h(
+                "ul",
+                { class: "meta warn-list" },
+                (val.warnings as string[]).filter((w) => !w.startsWith("Cash") && !w.startsWith("Balance"))
+                  .map((w) => h("li", null, w)),
+              )
+              : h("p", { class: "meta" }, "At the latest prices."),
+          )
+          : null,
         a.kind === "cash" ? null : details(
           "Add asset",
           h(

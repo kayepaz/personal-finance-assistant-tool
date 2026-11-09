@@ -207,7 +207,24 @@ function buildRouter(opts: AppOptions): Router<State> {
   });
 
   // ----- accounts -----
-  r.get("/api/accounts", (c) => accounts.listAccounts(data(c), c.url.searchParams.get("archived") === "1"));
+  r.get(
+    "/api/accounts",
+    (c) =>
+      accounts.listAccounts(data(c), c.url.searchParams.get("archived") === "1").map((a) => {
+        const v = valuation.accountValue(data(c), cache(c), a.id as string, c.state.today());
+        return {
+          ...a,
+          value: {
+            native: v.value_native,
+            base: v.value_base,
+            base_currency: v.base_currency,
+            as_of: v.as_of,
+            stale: v.stale,
+            warnings: v.warnings,
+          },
+        };
+      }),
+  );
   r.post(
     "/api/accounts",
     async (c) =>
@@ -220,6 +237,7 @@ function buildRouter(opts: AppOptions): Router<State> {
     ...accounts.getAccount(data(c), c.params.id),
     assets: assets.listAssets(data(c), c.params.id),
     snapshots: accounts.listSnapshots(data(c), c.params.id),
+    valuation: valuation.accountValue(data(c), cache(c), c.params.id, c.state.today()),
   }));
   r.patch("/api/accounts/:id", async (c) => {
     const b = await c.body();

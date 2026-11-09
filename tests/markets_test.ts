@@ -270,3 +270,30 @@ Deno.test("migration 0010 assigns markets and fixes .TO symbols", () => {
     ["MAPLE", "OTHER", "OTHER", "MAPLE"],
   ]);
 });
+
+Deno.test("account pages and the account list carry current values", async () => {
+  const { ok } = await setup();
+  const acct = await ok("POST", "/api/accounts", {
+    name: "Brokerage",
+    kind: "self_directed",
+    currency: "CAD",
+  });
+  await ok("POST", `/api/accounts/${acct.id}/snapshots`, { kind: "cash", amount: "2500" });
+  const art = await ok("POST", "/api/instruments", { market: "OTHER", symbol: "ART", currency: "CAD" });
+  const asset = await ok("POST", "/api/assets", { account_id: acct.id, instrument_id: art.id });
+  await ok("POST", `/api/assets/${asset.id}/buys`, { trade_date: "2026-05-01", quantity: "2", price: "100" });
+  await ok("POST", `/api/instruments/${art.id}/prices`, { close: "150.5" });
+  const card = await ok("POST", "/api/accounts", { name: "Visa", kind: "cash", currency: "CAD" });
+  await ok("POST", `/api/accounts/${card.id}/snapshots`, { kind: "value", amount: "-640.20" });
+
+  const page = await ok("GET", `/api/accounts/${acct.id}`);
+  assert.deepEqual(
+    [page.valuation.holdings[0].value_account, page.valuation.holdings_native, page.valuation.value_native],
+    ["301", "301", "2801"],
+  );
+  const list = await ok("GET", "/api/accounts");
+  assert.deepEqual(list.map((a: J) => [a.name, a.value.native]), [["Brokerage", "2801"], [
+    "Visa",
+    "-640.2",
+  ]]);
+});
