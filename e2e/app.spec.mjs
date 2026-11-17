@@ -58,7 +58,7 @@ test("investing: a thesis with a shared trigger fires and can be adjusted", asyn
   await page.click("button:has-text('Create account')");
   await open("Add asset");
   await page.selectOption("select[name=instrument_id]", "__new");
-  await expect(page.locator(".provider-hint")).toContainText("from Alpha Vantage or Finnhub");
+  await expect(page.locator(".provider-hint")).toContainText("No price provider covers");
   // Check symbol fills in the name (the server's provider call is stubbed here; no keys in tests).
   await page.route("**/api/instruments/check", (r) =>
     r.fulfill({
@@ -214,6 +214,41 @@ test("real estate: value is houses minus mortgages", async () => {
   }
   await expect(page.locator(".panel", { has: page.getByRole("heading", { name: "Value" }) }).locator(".big"))
     .toContainText("438,000.00");
+});
+
+test("settings: market data providers can be added, ordered and removed", async () => {
+  await nav("Settings").click();
+  const panel = page.locator(".panel", { has: page.getByRole("heading", { name: "Market data" }) });
+  await expect(panel).toContainText("No providers yet");
+
+  const form = panel.locator("details", { has: page.locator("summary", { hasText: "Add a provider" }) });
+  const add = async (type, fill) => {
+    await form.locator("summary").click();
+    await form.locator("select[name=provider_type]").selectOption(type);
+    await fill?.();
+    await form.getByLabel("I agree to send the data described above").check();
+    await form.locator("button:has-text('Add provider')").click();
+  };
+  await add("bankofcanada");
+  await expect(panel.locator(".provider h3").first()).toContainText("1. Bank of Canada");
+
+  await add("custom", async () => {
+    await form.locator("input[name=prov_name]").fill("Home quotes");
+    await form.locator("select[name=prov_plan]").selectOption("paid");
+    await form.locator("input[name=prov_url]").fill("https://quotes.example.com/{ticker}");
+    await expect(form.locator(".consent")).toContainText("quotes.example.com");
+    await form.locator("input[name=prov_price]").fill("price");
+  });
+  const custom = panel.locator(".provider", { hasText: "Home quotes" });
+  await expect(custom).toContainText("No pacing");
+  await expect(custom.locator(".badge", { hasText: "Paid" })).toBeVisible();
+
+  await custom.getByRole("button", { name: "↑" }).click();
+  await expect(panel.locator(".provider h3").first()).toContainText("1. Home quotes");
+
+  await panel.locator(".provider", { hasText: "Home quotes" }).getByRole("button", { name: "Remove" })
+    .click();
+  await expect(panel.locator(".provider", { hasText: "Home quotes" })).toHaveCount(0);
 });
 
 test("settings: storage, communication log, and sign out", async () => {

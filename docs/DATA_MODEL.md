@@ -31,6 +31,7 @@ net_worth_snapshots (one row per month)
 notification_channels ──< notification_deliveries >── notifications   (outbox)
 trailing_highs (high-water mark per trigger × thesis link)
 assets ──< asset_values   (dated declared values / amounts owed for houses and mortgages)
+providers (market-data sources: type, plan free|paid, key, daily_limit, position, consent via consents 'market_data:<id>')
 instruments ──< manual_prices
            (instruments.market: US, TSX, TSXV, LSE, XETRA, BSE, SSE, SZSE, CRYPTO, METAL or OTHER)
 consents   (what data may leave the server, and where)

@@ -3,11 +3,18 @@
  * currencies; any pair through CAD is derived from those. Alpha Vantage is the fallback for currencies the
  * Bank doesn't publish. Rates live in cache.db.
  */
-import { type DB, getSetting, type Row } from "../db/db.ts";
+import { type DB, type Row } from "../db/db.ts";
 import * as d from "../lib/decimal.ts";
 import { isIsoDate } from "../lib/dates.ts";
-import { PURPOSE_HEADER } from "./netlog.ts";
-import { BANK_OF_CANADA, countCall, hasConsent, QuotaExceeded, usage } from "./prices.ts";
+import {
+  allProviders,
+  budgetProblem,
+  countCall,
+  markExhausted,
+  providerFetch,
+  QuotaExceeded,
+  readyProviders,
+} from "./providers.ts";
 
 /** Currencies with a daily Bank of Canada series named FX{CODE}CAD. */
 export const BOC_CURRENCIES = new Set([
@@ -109,19 +116,15 @@ export async function refreshFx(
   if (!needed.length) return result;
 
   // 1. Bank of Canada: one request for every series we need (each currency and the base, against CAD).
-  const bocAllowed = hasConsent(data, `market_data:${BANK_OF_CANADA.id}`);
+  const boc = readyProviders(data, "bankofcanada")[0];
   const bocWanted = [...new Set([...needed, base])]
     .filter((c) => c !== "CAD" && BOC_CURRENCIES.has(c) && !fetchedToday(cache, c, "CAD", utcDay));
-  if (
-    bocAllowed && bocWanted.length &&
-    usage(cache, BANK_OF_CANADA.id, utcDay).calls < BANK_OF_CANADA.dailyLimit
-  ) {
+  if (boc && bocWanted.length && !budgetProblem(cache, boc, utcDay)) {
     try {
-      countCall(cache, BANK_OF_CANADA.id, utcDay);
+      countCall(cache, boc.id, utcDay);
       const series = bocWanted.map((c) => `FX${c}CAD`).join(",");
-      const res = await fetchFn(`https://www.bankofcanada.ca/valet/observations/${series}/json?recent=5`, {
-        headers: { [PURPOSE_HEADER]: `Exchange rates · ${bocWanted.join(", ")} · Bank of Canada` },
-      });
+      const f = providerFetch(boc, fetchFn, `Exchange rates · ${bocWanted.join(", ")}`);
+      const res = await f(`https://www.bankofcanada.ca/valet/observations/${series}/json?recent=5`);
       if (!res.ok) throw new Error(`Bank of Canada HTTP ${res.status}`);
       const body = await res.json();
       const obs = Array.isArray(body.observations) ? body.observations as Record<string, unknown>[] : [];
@@ -131,7 +134,7 @@ export async function refreshFx(
         const hit = [...obs].reverse().find((o) => isIsoDate(o.d) && (o[key] as { v?: unknown })?.v);
         const value = hit ? String((hit[key] as { v: unknown }).v).trim() : "";
         if (hit && d.isDecimal(value) && d.sign(value) > 0) {
-          storeRate(cache, c, "CAD", hit.d as string, value, BANK_OF_CANADA.id);
+          storeRate(cache, c, "CAD", hit.d as string, value, "bankofcanada");
           result.updated.push(`${c}/CAD`);
         }
       }
@@ -141,42 +144,40 @@ export async function refreshFx(
   }
 
   // 2. Alpha Vantage fallback for anything still unconvertible.
-  const avKey = getSetting(data, "api_key:alphavantage");
-  const avAllowed = !!avKey && hasConsent(data, "market_data:alphavantage");
+  const av = readyProviders(data, "alphavantage")[0];
   for (const c of needed) {
     if (fxRate(cache, c, base)) {
       result.missing = result.missing.filter((m) => m.currency !== c);
       continue;
     }
-    if (!avAllowed) {
+    if (!av) {
       if (!result.missing.some((m) => m.currency === c)) {
+        const hasBoc = allProviders(data).some((p) => p.type === "bankofcanada");
         result.missing.push({
           currency: c,
-          error: bocAllowed
-            ? "Not published by the Bank of Canada; add Alpha Vantage in Settings"
-            : "Turn on the Bank of Canada in Settings → Market data",
+          error: boc
+            ? "Not published by the Bank of Canada; add Alpha Vantage in Settings → Market data"
+            : hasBoc
+            ? "The Bank of Canada provider isn't ready (Settings → Market data)"
+            : "Add the Bank of Canada in Settings → Market data",
         });
       }
       continue;
     }
-    const u = usage(cache, "alphavantage", utcDay);
-    if (u.exhausted || u.calls >= 25) {
-      result.missing.push({ currency: c, error: "Alpha Vantage daily limit reached; will retry tomorrow" });
+    if (budgetProblem(cache, av, utcDay)) {
+      result.missing.push({ currency: c, error: `${av.name} daily limit reached; will retry tomorrow` });
       continue;
     }
     try {
-      countCall(cache, "alphavantage", utcDay);
+      countCall(cache, av.id, utcDay);
       const url = new URL("https://www.alphavantage.co/query");
       url.search = new URLSearchParams({
         function: "CURRENCY_EXCHANGE_RATE",
         from_currency: c,
         to_currency: base,
-        apikey: avKey!,
-      })
-        .toString();
-      const res = await fetchFn(url, {
-        headers: { [PURPOSE_HEADER]: `Exchange rate · ${c}/${base} · Alpha Vantage` },
-      });
+        apikey: av.apiKey!,
+      }).toString();
+      const res = await providerFetch(av, fetchFn, `Exchange rate · ${c}/${base}`)(url);
       const body = await res.json();
       if (body.Note || body.Information) throw new QuotaExceeded(String(body.Note ?? body.Information));
       const info = body["Realtime Currency Exchange Rate"];
@@ -187,13 +188,9 @@ export async function refreshFx(
       result.updated.push(`${c}/${base}`);
       result.missing = result.missing.filter((m) => m.currency !== c);
     } catch (err) {
-      if (err instanceof QuotaExceeded) {
-        cache.prepare("UPDATE api_usage SET exhausted = 1 WHERE provider = 'alphavantage' AND day = ?").run(
-          utcDay,
-        );
-      }
+      if (err instanceof QuotaExceeded) markExhausted(cache, av.id, utcDay);
       result.missing = result.missing.filter((m) => m.currency !== c);
-      result.missing.push({ currency: c, error: `Alpha Vantage: ${(err as Error).message}` });
+      result.missing.push({ currency: c, error: `${av.name}: ${(err as Error).message}` });
     }
   }
   return result;

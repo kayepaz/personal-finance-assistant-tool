@@ -7,6 +7,19 @@ version is tagged in git (`v0.1.0` …) with a matching GitHub release.
 
 ### Changed
 
+- **Market data providers are a list you manage** (Settings → Market data) instead of three fixed entries. Add
+  Alpha Vantage, Finnhub or the Bank of Canada from a dropdown, or a **custom JSON API** (a URL with
+  `{symbol}`/`{ticker}`/`{market}`/`{currency}`/`{apikey}` placeholders, the price's JSON path, an optional
+  date path and key header, and the markets it covers). Each provider has a name, a **Free or Paid plan**, an
+  API key, a daily call limit (blank = none), on/off, and its own consent. Providers are tried in list order
+  (↑/↓). Pointing a custom API at a different host withdraws consent until you agree again. Migration `0011`
+  moves existing keys and consents into the list.
+- **Free plans are paced**: at most one call every 2 seconds per provider (Alpha Vantage asks for at least one
+  second). Paid plans aren't paced, and switching Alpha Vantage to Paid lifts the 25-a-day cap.
+- The instrument form's price hint names the providers you've configured that cover the market, or says none
+  does yet.
+- API keys are masked anywhere they appear in the communication log, including custom URL paths and headers.
+
 - New instrument form starts from a **Market** dropdown (US, TSX, TSX Venture, London, Xetra, Bombay,
   Shanghai, Shenzhen, Crypto, Precious metal, Other). The market fills in the currency, type choices and the
   symbol sent to price providers, and a line under the form shows exactly what will be fetched and from where.

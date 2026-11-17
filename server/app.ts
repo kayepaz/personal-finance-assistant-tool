@@ -20,6 +20,7 @@ import * as storage from "./services/storage.ts";
 import { clearNetworkLog, listNetworkLog, loggedFetch } from "./services/netlog.ts";
 import * as notes from "./services/notifications.ts";
 import * as prices from "./services/prices.ts";
+import * as providers from "./services/providers.ts";
 import { type JobReport, runJobs } from "./services/engine.ts";
 
 export interface AppOptions {
@@ -117,25 +118,35 @@ function buildRouter(opts: AppOptions): Router<State> {
     base_currency: getSetting(data(c), "base_currency"),
     time_zone: getSetting(data(c), "time_zone"),
     today: c.state.today(),
-    providers: prices.providerStatus(data(c), cache(c), new Date().toISOString().slice(0, 10)),
+    providers: providers.listProviders(data(c), cache(c), new Date().toISOString().slice(0, 10)),
+    provider_types: providers.providerTypes(),
     deferred: prices.listDeferred(cache(c)),
     last_jobs: lastJobs,
   }));
 
-  r.post("/api/providers/:id", async (c) => {
-    const b = await c.body();
-    const p = prices.findProvider(c.params.id);
-    if (!p) throw new HttpError(404, "Unknown provider");
-    if (v.has(b, "api_key") && p.needsKey) {
-      prices.setProviderKey(data(c), p.id, v.str(b, "api_key", { optional: true, max: 200 }) || null);
-    }
-    if (v.has(b, "consent")) {
-      prices.setConsent(data(c), `market_data:${p.id}`, p.consentText, v.bool(b, "consent")!);
-    }
-    return prices.providerStatus(data(c), cache(c), new Date().toISOString().slice(0, 10)).find((x) =>
-      x.id === p.id
+  const providerView = (c: C, id: string) =>
+    providers.listProviders(data(c), cache(c), new Date().toISOString().slice(0, 10)).find((x) =>
+      x.id === id
     );
+  r.post("/api/providers", async (c) => {
+    const p = providers.createProvider(data(c), await c.body());
+    return json(providerView(c, p.id), 201);
   });
+  // PATCH changes a provider; POST to a built-in type's name ("alphavantage") also creates it if missing.
+  r.patch("/api/providers/:id", async (c) => {
+    providers.updateProvider(data(c), c.params.id, await c.body());
+    return providerView(c, c.params.id);
+  });
+  r.post("/api/providers/:id", async (c) => {
+    const p = providers.upsertBuiltin(data(c), c.params.id, await c.body());
+    return providerView(c, p.id);
+  });
+  r.post("/api/providers/:id/move", async (c) => {
+    const b = await c.body();
+    providers.moveProvider(data(c), c.params.id, v.oneOf(b, "direction", ["up", "down"] as const)!);
+    return providers.listProviders(data(c), cache(c), new Date().toISOString().slice(0, 10));
+  });
+  r.delete("/api/providers/:id", (c) => providers.deleteProvider(data(c), c.params.id));
 
   r.post("/api/jobs/run", async (c) => (lastJobs = await runJobs(c.state.dbs, c.state.fetchFn)));
 
@@ -267,7 +278,24 @@ function buildRouter(opts: AppOptions): Router<State> {
   // ----- instruments -----
   r.get("/api/instruments", (c) => instruments.listInstruments(data(c)));
   r.post("/api/instruments", async (c) => json(instruments.createInstrument(data(c), await c.body()), 201));
-  r.get("/api/markets", () => ({ markets: MARKETS, metals: METALS }));
+  // Markets, plus which configured price providers cover each (so forms can say where prices come from).
+  r.get("/api/markets", (c) => ({
+    markets: MARKETS,
+    metals: METALS,
+    providers: providers.priceProviders(data(c)).map(({ p, notReady }) => ({
+      name: p.name,
+      ready: !notReady,
+      markets: MARKETS.filter((m) =>
+        providers.covers(p, {
+          symbol: m.id === "CRYPTO" ? "" : "X",
+          kind: m.kinds[0],
+          currency: m.currency,
+          market: m.id,
+        })
+      ).map((m) => m.id),
+      crypto_needs_exchange_prefix: p.type === "finnhub",
+    })),
+  }));
   r.post("/api/instruments/check", async (c) => {
     const b = await c.body();
     const f = instruments.resolveFields(b);

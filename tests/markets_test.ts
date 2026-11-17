@@ -186,7 +186,7 @@ Deno.test("check symbol fetches one price; Finnhub is skipped outside the US", a
 
   const off = await ok("POST", "/api/instruments/check", { market: "TSX", symbol: "SHOP" });
   assert.equal(off.ok, false);
-  assert.match(off.tried[0].result, /not switched on/);
+  assert.match(off.tried[0].result, /no price providers set up/);
 
   await ok("POST", "/api/providers/alphavantage", { api_key: "AV", consent: true });
   await ok("POST", "/api/providers/finnhub", { api_key: "FH", consent: true });
@@ -213,7 +213,7 @@ Deno.test("check symbol fetches one price; Finnhub is skipped outside the US", a
   assert.equal(bad.ok, false);
   assert.deepEqual(bad.tried.map((t: J) => t.result), [
     "no price for this symbol",
-    "doesn't cover this market (free plan)",
+    "doesn't cover this market",
   ]);
   assert.ok(
     !hosts.some((h) => h.startsWith("finnhub.io") && !h.endsWith("AAPL")),

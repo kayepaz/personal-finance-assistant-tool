@@ -8,15 +8,15 @@ calculated.
 
 ## Architecture
 
-| Piece           | Choice                                                                                                  |
-| --------------- | ------------------------------------------------------------------------------------------------------- |
-| Server          | Deno, single process, zero third-party dependencies                                                     |
-| Storage         | Two SQLite files on the server: `data.db` (precious user data) and `cache.db` (rebuildable market data) |
-| Client          | PWA served by the server; plain TypeScript, types stripped on the fly (no build step)                   |
-| Users           | One user per server instance; any number of client devices                                              |
-| Auth            | Passphrase set at install → PBKDF2-SHA256 hash; each device gets a revocable session token              |
-| Market data     | Alpha Vantage and Finnhub, user-supplied keys, daily-quota aware                                        |
-| Background work | In-process scheduler on the server (prices, triggers, reviews)                                          |
+| Piece           | Choice                                                                                                                                             |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Server          | Deno, single process, zero third-party dependencies                                                                                                |
+| Storage         | Two SQLite files on the server: `data.db` (precious user data) and `cache.db` (rebuildable market data)                                            |
+| Client          | PWA served by the server; plain TypeScript, types stripped on the fly (no build step)                                                              |
+| Users           | One user per server instance; any number of client devices                                                                                         |
+| Auth            | Passphrase set at install → PBKDF2-SHA256 hash; each device gets a revocable session token                                                         |
+| Market data     | A user-managed list of providers: Alpha Vantage, Finnhub, Bank of Canada or a custom JSON API; free plans paced to 1 call / 2 s; daily-quota aware |
+| Background work | In-process scheduler on the server (prices, triggers, reviews)                                                                                     |
 
 ### Privacy rules
 

@@ -7,6 +7,11 @@ import { uuidv7 } from "../lib/ids.ts";
 
 /** Callers name the purpose of a call with this header; it is removed before the request is sent. */
 export const PURPOSE_HEADER = "x-pfat-purpose";
+/**
+ * Callers put a key that appears somewhere unusual (a custom API's URL path or header) in this header; it is
+ * removed before sending and every occurrence of it is masked in the log.
+ */
+export const SECRET_HEADER = "x-pfat-secret";
 
 const MAX_BODY = 64 * 1024;
 const KEEP_ROWS = 2000;
@@ -63,7 +68,11 @@ export function loggedFetch(cache: () => DB, base: typeof fetch = fetch): typeof
     const headers = new Headers(req.headers);
     const purpose = purposeFor(new URL(req.url), headers.get(PURPOSE_HEADER));
     headers.delete(PURPOSE_HEADER);
-    const requestBody = bodyText(init?.body);
+    const secret = headers.get(SECRET_HEADER) ?? "";
+    headers.delete(SECRET_HEADER);
+    const hide = (text: string) =>
+      secret.length >= 4 ? text.split(secret).join(MASK).split(encodeURIComponent(secret)).join(MASK) : text;
+    const requestBody = hide(bodyText(init?.body));
     const started = Date.now();
     const id = uuidv7(started);
     let response: Response | undefined;
@@ -94,8 +103,8 @@ export function loggedFetch(cache: () => DB, base: typeof fetch = fetch): typeof
           Date.now() - started,
           purpose,
           req.method,
-          maskUrl(req.url),
-          JSON.stringify(headerObject(headers)),
+          hide(maskUrl(req.url)),
+          hide(JSON.stringify(headerObject(headers))),
           requestBody,
           response?.status ?? null,
           JSON.stringify(response ? headerObject(response.headers) : {}),

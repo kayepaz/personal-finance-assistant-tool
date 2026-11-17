@@ -1002,3 +1002,21 @@ fieldset,
 .trade-edit > button {
   justify-self: start;
 }
+.provider-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: .25rem 1rem;
+}
+.provider-head h3 {
+  margin: 0;
+}
+.market-boxes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: .2rem .75rem;
+}
+.provider + details {
+  margin-top: 1rem;
+}

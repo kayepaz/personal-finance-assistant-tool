@@ -4,6 +4,7 @@ import { migrate, openDatabase, openInMemory } from "../server/db/db.ts";
 import { createApp } from "../server/app.ts";
 import { evaluateTriggers, queueBalanceUpdates, queueClaimReviews } from "../server/services/engine.ts";
 import { setConsent, setProviderKey, storePrice } from "../server/services/prices.ts";
+import { upsertBuiltin } from "../server/services/providers.ts";
 import { fxRate, refreshFx, storeRate } from "../server/services/fx.ts";
 import { resetLoginBrake } from "../server/services/auth.ts";
 
@@ -463,7 +464,7 @@ Deno.test("fx: Bank of Canada needs consent, derives cross rates, falls back to 
   assert.equal(calls.length, 0, "no request without consent");
   assert.equal(r.missing.length, 2);
 
-  setConsent(dbs.data, "market_data:bankofcanada", "test", true);
+  upsertBuiltin(dbs.data, "bankofcanada", { consent: true });
   r = await refreshFx(dbs.data, dbs.cache, ["USD", "EUR", "ISK"], "CAD", day, fakeFetch);
   assert.deepEqual(calls, ["www.bankofcanada.ca/valet/observations/FXUSDCAD,FXEURCAD/json"]);
   assert.equal(fxRate(dbs.cache, "USD", "CAD")!.rate, "1.40");

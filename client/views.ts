@@ -2274,15 +2274,22 @@ function instrumentEditor(nav: Nav, data: J, current: J = {}): { el: HTMLElement
     note.hidden = !m.note;
     const manual = m.priceSource === "manual" || manualBox.checked;
     const ps = providerSymbol();
-    const providers = [
-      m.alphaVantageSuffix !== null ? "Alpha Vantage" : null,
-      m.finnhub && (m.id !== "CRYPTO" || ps.includes(":")) ? "Finnhub" : null,
-    ].filter(Boolean);
+    // The configured providers (Settings → Market data) that can price this market, in the order tried.
+    const configured = (data.providers ?? []) as J[];
+    const providers = configured
+      .filter((p) =>
+        p.ready &&
+        (p.markets.includes(m.id) ||
+          (m.id === "CRYPTO" && p.crypto_needs_exchange_prefix && ps.includes(":")))
+      )
+      .map((p) => p.name);
     hint.textContent = manual
       ? "Prices: you'll record them yourself on the asset page."
+      : !providers.length
+      ? `No price provider covers ${m.label} yet. Add one in Settings → Market data, or enter prices yourself.`
       : ps
-      ? `Prices: ${ps} from ${providers.join(" or ")}${m.id === "METAL" ? " (spot, per troy ounce)" : ""}.`
-      : `Prices from ${providers.join(" or ")}.`;
+      ? `Prices: ${ps} from ${providers.join(", then ")}${m.id === "METAL" ? " (spot, per troy ounce)" : ""}.`
+      : `Prices from ${providers.join(", then ")}.`;
     checkBtn.hidden = manual;
     checkResult.textContent = "";
     checkResult.hidden = true;
@@ -2362,13 +2369,348 @@ function instrumentEditor(nav: Nav, data: J, current: J = {}): { el: HTMLElement
 
 // ---------------------------------------------------------------- settings
 
+/** Settings → Market data: the configured providers, in the order they're tried, and a form to add one. */
+function marketDataPanel(nav: Nav, s: J, markets: J): HTMLElement {
+  const types = s.provider_types as J[];
+  const typeInfo = (t: string) => types.find((x) => x.type === t)!;
+  const act = (fn: () => Promise<unknown>) => async () => {
+    try {
+      await fn();
+      nav.refresh();
+    } catch (e) {
+      nav.toast((e as Error).message, "error");
+    }
+  };
+  const list = s.providers as J[];
+
+  const row = (p: J, i: number) => {
+    const t = typeInfo(p.type);
+    const editor = providerFields(markets, t, p);
+    return h(
+      "div",
+      { class: "provider" },
+      h(
+        "div",
+        { class: "provider-head" },
+        h(
+          "h3",
+          null,
+          `${i + 1}. ${p.name} `,
+          p.not_ready
+            ? h("span", { class: "badge" }, p.enabled ? "Not ready" : "Off")
+            : h("span", { class: "badge badge-active" }, "On"),
+          " ",
+          h(
+            "span",
+            { class: `badge ${p.plan === "paid" ? "badge-closed" : ""}` },
+            p.plan === "paid" ? "Paid" : "Free",
+          ),
+        ),
+        h(
+          "div",
+          { class: "row-actions" },
+          h("button", {
+            type: "button",
+            class: "link",
+            disabled: i === 0,
+            title: "Try this provider earlier",
+            onclick: act(() => post(`/providers/${p.id}/move`, { direction: "up" })),
+          }, "↑"),
+          h("button", {
+            type: "button",
+            class: "link",
+            disabled: i === list.length - 1,
+            title: "Try this provider later",
+            onclick: act(() => post(`/providers/${p.id}/move`, { direction: "down" })),
+          }, "↓"),
+          h("button", {
+            type: "button",
+            class: "link",
+            onclick: act(() => patch(`/providers/${p.id}`, { enabled: !p.enabled })),
+          }, p.enabled ? "Switch off" : "Switch on"),
+          h("button", {
+            type: "button",
+            class: "link danger",
+            onclick: () => {
+              if (confirm(`Remove ${p.name}? Its consent is withdrawn; prices already fetched stay.`)) {
+                act(() => del(`/providers/${p.id}`))();
+              }
+            },
+          }, "Remove"),
+        ),
+      ),
+      h(
+        "p",
+        { class: "meta" },
+        [
+          p.name !== p.type_label ? p.type_label : null,
+          p.uses,
+          p.pacing,
+          p.daily_limit === null
+            ? `${p.calls_today} calls today (no daily limit)`
+            : `${p.calls_today} of ${p.daily_limit} calls today${
+              p.exhausted_today ? " · limit reached" : ""
+            }`,
+          p.needs_key === "none" ? "no API key needed" : p.has_key ? `key ${p.key_hint}` : null,
+        ].filter(Boolean).join(" · "),
+      ),
+      p.not_ready && p.enabled ? h("p", { class: "meta warn" }, `Not used yet: ${p.not_ready}.`) : null,
+      h("p", { class: "consent" }, p.consent_text),
+      h(
+        "label",
+        { class: "check" },
+        h("input", {
+          type: "checkbox",
+          checked: p.consented,
+          onchange: (e: Event) =>
+            act(() => patch(`/providers/${p.id}`, { consent: (e.target as HTMLInputElement).checked }))(),
+        }),
+        ` I agree to send the data described above to ${p.name}`,
+      ),
+      details(
+        "Edit",
+        h(
+          "form",
+          {
+            onsubmit: onSubmit(nav, () =>
+              patch(`/providers/${p.id}`, editor.values()).then(() => {
+                nav.toast(`${p.name} saved.`, "ok");
+                nav.refresh();
+              })),
+          },
+          editor.el,
+          h("button", { type: "submit", class: "primary" }, "Save"),
+        ),
+      ),
+    );
+  };
+
+  // Add a provider: pick a type, then its fields appear.
+  const typeSel = select(
+    "provider_type",
+    [["", "Choose…"], ...types.map((t): [string, string] => [t.type, t.label])],
+  );
+  const addArea = h("div");
+  const addConsent = h("input", { type: "checkbox", required: true });
+  const consentText = h("p", { class: "consent" });
+  let addEditor: { el: HTMLElement; values: () => J; consent: () => string } | null = null;
+  typeSel.addEventListener("change", () => {
+    const t = types.find((x) => x.type === typeSel.value);
+    addEditor = t ? providerFields(markets, t) : null;
+    addArea.replaceChildren(
+      ...(t
+        ? [
+          h(
+            "p",
+            { class: "hint" },
+            t.help,
+            t.signup
+              ? [" ", h("a", { href: t.signup, target: "_blank", rel: "noopener" }, "Get a key")]
+              : null,
+          ),
+          addEditor!.el,
+          consentText,
+          h("label", { class: "check" }, addConsent, " I agree to send the data described above"),
+          h("button", { type: "submit", class: "primary" }, "Add provider"),
+        ]
+        : []),
+    );
+    const sync = () => (consentText.textContent = addEditor?.consent() ?? "");
+    addArea.addEventListener("input", sync);
+    sync();
+  });
+
+  return h(
+    "div",
+    { class: "panel" },
+    h("h2", null, "Market data"),
+    h(
+      "p",
+      { class: "hint" },
+      "Prices and exchange rates come only from the providers below, tried in this order, and only after you agree to what each one is sent. Only ticker symbols and currency codes are sent. Providers on a free plan are called at most once every 2 seconds.",
+    ),
+    list.length ? list.map(row) : empty("No providers yet. Add one below to start fetching prices."),
+    details(
+      "Add a provider",
+      h(
+        "form",
+        {
+          onsubmit: onSubmit(nav, async () => {
+            if (!addEditor) throw new Error("Choose a provider type");
+            const p = await post("/providers", {
+              type: typeSel.value,
+              ...addEditor.values(),
+              consent: addConsent.checked,
+            });
+            nav.toast(`Added ${p.name}.`, "ok");
+            nav.refresh();
+          }),
+        },
+        field(
+          "Provider",
+          typeSel,
+          "Alpha Vantage, Finnhub and the Bank of Canada are built in; a custom JSON API can be any other price source.",
+        ),
+        addArea,
+      ),
+    ),
+    s.deferred.length
+      ? h(
+        "p",
+        { class: "hint" },
+        `Waiting for tomorrow's quota: ${s.deferred.map((x: J) => x.key).join(", ")}`,
+      )
+      : null,
+    h("button", {
+      onclick: async () => {
+        try {
+          const r = await post("/jobs/run");
+          nav.toast(
+            `Checked: ${r.prices.updated.length} prices updated, ${r.triggers_fired} triggers fired, ${r.claim_reviews} reviews due.`,
+            "ok",
+          );
+          nav.refresh();
+        } catch (e) {
+          nav.toast((e as Error).message, "error");
+        }
+      },
+    }, "Run checks now"),
+    s.last_jobs
+      ? h("p", { class: "meta" }, `Last run ${new Date(s.last_jobs.ran_at).toLocaleString()}`)
+      : null,
+  );
+}
+
+/** The fields for one provider (new when `p` is absent): name, plan, key, daily limit, and a custom API's setup. */
+function providerFields(
+  markets: J,
+  t: J,
+  p: J = {},
+): { el: HTMLElement; values: () => J; consent: () => string } {
+  const isNew = !p.id;
+  const custom = t.type === "custom";
+  const cfg = (p.config ?? {}) as J;
+  const name = input("prov_name", { value: p.name ?? "", placeholder: t.label });
+  const plan = select(
+    "prov_plan",
+    (t.plans as string[]).map((x): [string, string] => [x, x === "paid" ? "Paid" : "Free"]),
+    {},
+    p.plan ?? "free",
+  );
+  const key = input("prov_key", {
+    type: "password",
+    autocomplete: "off",
+    placeholder: p.has_key ? "Saved — type to replace" : t.needs_key === "required" ? "Required" : "Optional",
+  });
+  const limitDefault = (pl: string) => (t.limits as J)[pl];
+  const limit = input("prov_limit", {
+    type: "number",
+    min: "1",
+    value: isNew ? (limitDefault("free") ?? "") : (p.daily_limit ?? ""),
+    placeholder: "No limit",
+  });
+  let limitTouched = false;
+  limit.addEventListener("input", () => (limitTouched = true));
+  plan.addEventListener("change", () => {
+    if (!limitTouched) limit.value = limitDefault(plan.value) ?? "";
+  });
+  const url = input("prov_url", {
+    value: cfg.url ?? "",
+    placeholder: "https://api.example.com/quote/{ticker}?apikey={apikey}",
+    spellcheck: "false",
+  });
+  const priceField = input("prov_price", {
+    value: cfg.price_field ?? "",
+    placeholder: "e.g. price or data.0.close",
+  });
+  const dateField = input("prov_date", {
+    value: cfg.date_field ?? "",
+    placeholder: "optional, e.g. date or data.0.timestamp",
+  });
+  const keyHeader = input("prov_key_header", {
+    value: cfg.key_header ?? "",
+    placeholder: "optional, e.g. X-API-Key",
+  });
+  const chosen = new Set<string>(cfg.markets ?? ["US"]);
+  const marketBoxes = (markets.markets as J[]).filter((m) => m.id !== "OTHER").map((m) => {
+    const box = h("input", { type: "checkbox", value: m.id, checked: chosen.has(m.id) });
+    return { id: m.id, box, el: h("label", { class: "check" }, box, ` ${m.label}`) };
+  });
+  const host = () => {
+    try {
+      return new URL(url.value.replace(/\{[a-z]+\}/g, "x")).host || "(the URL above)";
+    } catch {
+      return "(the URL above)";
+    }
+  };
+
+  const el = h(
+    "div",
+    { class: "subfields" },
+    field("Name", name, "How it's shown in PFAT and the communication log."),
+    t.plans.length > 1
+      ? field("Plan", plan, "Free plans are paced to one call every 2 seconds. Paid plans aren't paced.")
+      : null,
+    t.needs_key === "none" ? null : field("API key", key),
+    field(
+      "Daily call limit",
+      limit,
+      "PFAT stops calling this provider for the day once it's reached. Blank = no limit.",
+    ),
+    custom
+      ? h(
+        "fieldset",
+        null,
+        h("legend", null, "Your API"),
+        field(
+          "URL",
+          url,
+          "Placeholders: {symbol} (as priced, e.g. SHOP.TRT), {ticker} (SHOP), {market} (TSX), {currency} (CAD), {apikey}.",
+        ),
+        field("Price field", priceField, "Where the price is in the JSON reply, as a dotted path."),
+        field("Date field", dateField, "A date (2026-11-17) or Unix time. Leave blank to use today's date."),
+        field("Key header", keyHeader, "If the API wants the key in a request header instead of the URL."),
+        h("p", { class: "field-label" }, "Markets it can price"),
+        h("div", { class: "market-boxes" }, marketBoxes.map((m) => m.el)),
+      )
+      : null,
+  );
+
+  const values = (): J => {
+    const out: J = {
+      name: name.value.trim(),
+      daily_limit: limit.value.trim() === "" ? null : Number(limit.value),
+    };
+    if (t.plans.length > 1) out.plan = plan.value;
+    if (t.needs_key !== "none" && (isNew || key.value.trim())) out.api_key = key.value.trim();
+    if (custom) {
+      out.config = {
+        url: url.value.trim(),
+        price_field: priceField.value.trim(),
+        ...(dateField.value.trim() ? { date_field: dateField.value.trim() } : {}),
+        ...(keyHeader.value.trim() ? { key_header: keyHeader.value.trim() } : {}),
+        markets: marketBoxes.filter((m) => (m.box as HTMLInputElement).checked).map((m) => m.id),
+      };
+    }
+    return out;
+  };
+  const consent = () =>
+    custom
+      ? `PFAT will send ticker symbols${
+        key.value.trim() ? " and the API key you entered" : ""
+      } to ${host()} to fetch prices. No holdings, quantities or balances are sent.`
+      : t.consent_text;
+  return { el, values, consent };
+}
+
 export async function settingsView(nav: Nav, onSignOut: () => void): Promise<HTMLElement> {
-  const [s, sessions, store, channels, netlog] = await Promise.all([
+  const [s, sessions, store, channels, netlog, markets] = await Promise.all([
     get("/settings"),
     get<J[]>("/sessions"),
     get("/storage"),
     get<J[]>("/channels"),
     get<J[]>("/network-log"),
+    get("/markets"),
   ]);
   return h(
     "section",
@@ -2379,92 +2721,7 @@ export async function settingsView(nav: Nav, onSignOut: () => void): Promise<HTM
       h("h1", null, "Settings"),
       h("p", { class: "sub" }, `PFAT v${s.version} · base currency ${s.base_currency} · ${s.time_zone}`),
     ),
-    h(
-      "div",
-      { class: "panel" },
-      h("h2", null, "Market data"),
-      h(
-        "p",
-        { class: "hint" },
-        "Prices and exchange rates come only from sources you've turned on below. Only ticker symbols and currency codes are sent.",
-      ),
-      s.providers.map((p: J) =>
-        h(
-          "div",
-          { class: "provider" },
-          h(
-            "h3",
-            null,
-            p.name,
-            " ",
-            p.consented && p.has_key
-              ? h("span", { class: "badge badge-active" }, "On")
-              : h("span", { class: "badge" }, "Off"),
-          ),
-          h("p", { class: "meta" }, `Used for: ${p.uses}${p.needs_key ? "" : " · no API key needed"}`),
-          h("p", { class: "consent" }, p.consent_text),
-          h(
-            "p",
-            { class: "meta" },
-            `${p.calls_today} of ${p.daily_limit} calls today${p.exhausted_today ? " · limit reached" : ""}`,
-          ),
-          !p.needs_key ? null : h(
-            "form",
-            {
-              class: "row-form",
-              onsubmit: onSubmit(
-                nav,
-                (d) => post(`/providers/${p.id}`, { api_key: d.api_key ?? "" }).then(() => nav.refresh()),
-              ),
-            },
-            input("api_key", {
-              type: "password",
-              placeholder: p.has_key ? "Key saved — enter to replace" : "API key",
-              autocomplete: "off",
-            }),
-            h("button", { type: "submit" }, "Save key"),
-          ),
-          h(
-            "label",
-            { class: "check" },
-            h("input", {
-              type: "checkbox",
-              checked: p.consented,
-              onchange: (e: Event) =>
-                post(`/providers/${p.id}`, { consent: (e.target as HTMLInputElement).checked }).then(() =>
-                  nav.refresh()
-                ),
-            }),
-            " I agree to send the data described above to ",
-            p.name,
-          ),
-        )
-      ),
-      s.deferred.length
-        ? h(
-          "p",
-          { class: "hint" },
-          `Waiting for tomorrow's quota: ${s.deferred.map((x: J) => x.key).join(", ")}`,
-        )
-        : null,
-      h("button", {
-        onclick: async () => {
-          try {
-            const r = await post("/jobs/run");
-            nav.toast(
-              `Checked: ${r.prices.updated.length} prices updated, ${r.triggers_fired} triggers fired, ${r.claim_reviews} reviews due.`,
-              "ok",
-            );
-            nav.refresh();
-          } catch (e) {
-            nav.toast((e as Error).message, "error");
-          }
-        },
-      }, "Run checks now"),
-      s.last_jobs
-        ? h("p", { class: "meta" }, `Last run ${new Date(s.last_jobs.ran_at).toLocaleString()}`)
-        : null,
-    ),
+    marketDataPanel(nav, s, markets),
     alertsPanel(nav, channels),
     backupPanel(nav, onSignOut),
     storagePanel(nav, store),
