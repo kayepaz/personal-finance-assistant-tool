@@ -16,6 +16,7 @@ import {
   priceProviders,
   type PriceRequest,
   QuotaExceeded,
+  RateLimited,
 } from "./providers.ts";
 
 export {
@@ -119,8 +120,13 @@ export async function refreshPrices(
         break;
       } catch (err) {
         if (err instanceof QuotaExceeded) {
-          markExhausted(cache, p.id, utcDay);
+          markExhausted(cache, p.id, utcDay, err.message);
           lastError = `${p.name} daily limit reached: ${err.message}`;
+          continue;
+        }
+        if (err instanceof RateLimited) {
+          // Busy, not out for the day: try the next provider, and retry this symbol on the next run.
+          lastError = `${p.name} rate limit (too many calls at once); will retry`;
           continue;
         }
         lastError = `${p.name}: ${(err as Error).message}`;
@@ -210,7 +216,7 @@ async function lookupName(
       const name = await providerName(p, req, fetchFn);
       if (name) return name;
     } catch (err) {
-      if (err instanceof QuotaExceeded) markExhausted(cache, p.id, utcDay);
+      if (err instanceof QuotaExceeded) markExhausted(cache, p.id, utcDay, err.message);
     }
   }
   return null;
@@ -268,7 +274,7 @@ export async function checkSymbol(
         ...(name ? { name } : {}),
       };
     } catch (err) {
-      if (err instanceof QuotaExceeded) markExhausted(cache, p.id, utcDay);
+      if (err instanceof QuotaExceeded) markExhausted(cache, p.id, utcDay, err.message);
       result.tried.push({ provider: p.name, result: (err as Error).message });
     }
   }

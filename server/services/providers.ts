@@ -17,7 +17,10 @@ import { getMarket, MARKETS } from "./markets.ts";
 
 type Obj = Record<string, unknown>;
 
+/** The provider's daily allowance is used up: stop calling it until tomorrow (UTC). */
 export class QuotaExceeded extends Error {}
+/** The provider asked us to slow down (calls per second/minute): skip it for now, but not for the day. */
+export class RateLimited extends Error {}
 
 export interface DailyClose {
   date: string;
@@ -160,12 +163,16 @@ export function setConsent(data: DB, purposeKey: string, description: string, gr
 
 // ---------- daily usage (cache.db) ----------
 
-export function usage(cache: DB, provider: string, day: string): { calls: number; exhausted: boolean } {
-  const r = cache.prepare("SELECT calls, exhausted FROM api_usage WHERE provider = ? AND day = ?").get(
+export function usage(
+  cache: DB,
+  provider: string,
+  day: string,
+): { calls: number; exhausted: boolean; note: string | null } {
+  const r = cache.prepare("SELECT calls, exhausted, note FROM api_usage WHERE provider = ? AND day = ?").get(
     provider,
     day,
   ) as Row | undefined;
-  return { calls: Number(r?.calls ?? 0), exhausted: r?.exhausted === 1 };
+  return { calls: Number(r?.calls ?? 0), exhausted: r?.exhausted === 1, note: (r?.note as string) || null };
 }
 
 export function countCall(cache: DB, provider: string, day: string, exhausted = false) {
@@ -175,8 +182,19 @@ export function countCall(cache: DB, provider: string, day: string, exhausted = 
   ).run(provider, day, exhausted ? 1 : 0);
 }
 
-export function markExhausted(cache: DB, provider: string, day: string) {
-  cache.prepare("UPDATE api_usage SET exhausted = 1 WHERE provider = ? AND day = ?").run(provider, day);
+export function markExhausted(cache: DB, provider: string, day: string, note = "") {
+  cache.prepare(
+    `INSERT INTO api_usage(provider, day, calls, exhausted, note) VALUES (?, ?, 0, 1, ?)
+     ON CONFLICT(provider, day) DO UPDATE SET exhausted = 1, note = excluded.note`,
+  ).run(provider, day, note.slice(0, 500));
+}
+
+/** Let a provider be called again today (after a mistaken stop, or a plan upgrade). */
+export function resumeToday(cache: DB, provider: string, day: string) {
+  cache.prepare("UPDATE api_usage SET exhausted = 0, note = NULL WHERE provider = ? AND day = ?").run(
+    provider,
+    day,
+  );
 }
 
 /** Why a provider can't take another call today, or null if it can. */
@@ -260,6 +278,8 @@ export function listProviders(data: DB, cache: DB, day: string): Row[] {
       not_ready: readiness(data, p),
       calls_today: u.calls,
       exhausted_today: u.exhausted,
+      // Stopped early (before its own limit) because the provider said so; shows the provider's words.
+      exhausted_note: u.exhausted ? u.note : null,
     };
   });
 }
@@ -443,7 +463,46 @@ const numToDec = (n: unknown): string | null => {
   return null;
 };
 
-const quotaMessage = /rate limit|requests per day|call frequency|premium|spread out/i;
+/**
+ * Alpha Vantage answers with a "Note"/"Information" message instead of data. Every one of them mentions premium
+ * plans, so tell them apart by what they're about:
+ *  - daily allowance ("…standard API rate limit is 25 requests per day…") → stop for today;
+ *  - burst ("…spreading out your free API requests more sparingly (1 request per second)…") → slow down;
+ *  - anything else (a premium-only endpoint, a bad key…) → this request failed.
+ */
+export function alphaVantageNotice(msg: string): "daily" | "burst" | "other" {
+  // Burst first: its sales pitch can also mention the daily allowance.
+  if (/per second|per minute|spreading out|sparingly|call frequency/i.test(msg)) return "burst";
+  if (/per day|daily/i.test(msg)) return "daily";
+  return "other";
+}
+
+/** Fetch an Alpha Vantage URL; on a burst notice, try once more (paced), then report it as rate-limited. */
+async function alphaVantageJson(f: typeof fetch, url: URL): Promise<Record<string, unknown>> {
+  for (let attempt = 0;; attempt++) {
+    const res = await f(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    const msg = body.Note ?? body.Information;
+    if (!msg) return body;
+    const kind = alphaVantageNotice(String(msg));
+    if (kind === "daily") throw new QuotaExceeded(String(msg));
+    if (kind === "burst") {
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, BURST_RETRY_MS));
+        continue;
+      }
+      throw new RateLimited(String(msg));
+    }
+    throw new Error(String(msg));
+  }
+}
+
+let BURST_RETRY_MS = 1500;
+/** Tests: don't wait before retrying a burst notice. */
+export function setBurstRetryMs(ms: number) {
+  BURST_RETRY_MS = ms;
+}
 
 export function covers(p: Provider, req: PriceRequest): boolean {
   switch (p.type) {
@@ -483,7 +542,7 @@ export async function lookupName(
     const url = new URL("https://finnhub.io/api/v1/stock/profile2");
     url.search = new URLSearchParams({ symbol: req.symbol, token: p.apiKey! }).toString();
     const res = await f(url);
-    if (res.status === 429) throw new QuotaExceeded("Finnhub rate limit");
+    if (res.status === 429) throw new RateLimited("Finnhub asked to slow down (calls per minute)");
     if (!res.ok) return null;
     const body = await res.json();
     return typeof body.name === "string" && body.name.trim() ? body.name.trim() : null;
@@ -493,13 +552,12 @@ export async function lookupName(
     const url = new URL("https://www.alphavantage.co/query");
     url.search = new URLSearchParams({ function: "SYMBOL_SEARCH", keywords: ticker(req), apikey: p.apiKey! })
       .toString();
-    const res = await f(url);
-    if (!res.ok) return null;
-    const body = await res.json();
-    if (body.Note || body.Information) {
-      const msg = String(body.Note ?? body.Information);
-      if (quotaMessage.test(msg)) throw new QuotaExceeded(msg);
-      return null;
+    let body: Record<string, unknown>;
+    try {
+      body = await alphaVantageJson(f, url);
+    } catch (err) {
+      if (err instanceof QuotaExceeded) throw err;
+      return null; // a name is a nice-to-have
     }
     const matches = (body.bestMatches ?? []) as Record<string, string>[];
     const hit = matches.find((m) => String(m["1. symbol"] ?? "").toUpperCase() === req.symbol.toUpperCase());
@@ -527,14 +585,8 @@ async function alphaVantageClose(
     ? { function: "CURRENCY_EXCHANGE_RATE", from_currency: req.symbol, to_currency: req.currency }
     : { function: "TIME_SERIES_DAILY", symbol: req.symbol };
   url.search = new URLSearchParams({ ...params, apikey: p.apiKey! }).toString();
-  const res = await f(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const body = await res.json();
-  if (body.Note || body.Information) {
-    const msg = String(body.Note ?? body.Information);
-    if (quotaMessage.test(msg)) throw new QuotaExceeded(msg);
-    throw new Error(msg);
-  }
+  // deno-lint-ignore no-explicit-any
+  const body: any = await alphaVantageJson(f, url);
   if (body["Error Message"]) return null; // unknown symbol
   if (req.kind === "metal") {
     // Spot price per troy ounce, as an exchange rate (e.g. XAU -> USD).
@@ -562,7 +614,7 @@ async function finnhubClose(p: Provider, req: PriceRequest, f: typeof fetch): Pr
   const url = new URL("https://finnhub.io/api/v1/quote");
   url.search = new URLSearchParams({ symbol: req.symbol, token: p.apiKey! }).toString();
   const res = await f(url);
-  if (res.status === 429) throw new QuotaExceeded("rate limit");
+  if (res.status === 429) throw new RateLimited("Finnhub asked to slow down (calls per minute)");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const body = await res.json();
   const close = numToDec(body.c);
@@ -611,7 +663,7 @@ async function customClose(p: Provider, req: PriceRequest, f: typeof fetch): Pro
   const headers: Record<string, string> = { accept: "application/json" };
   if (c.key_header && p.apiKey) headers[c.key_header] = p.apiKey;
   const res = await f(customUrl(p, req), { headers });
-  if (res.status === 429) throw new QuotaExceeded("rate limit");
+  if (res.status === 429) throw new RateLimited(`${p.name} asked to slow down (HTTP 429)`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   let body: unknown;

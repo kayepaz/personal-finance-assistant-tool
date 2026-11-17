@@ -2455,6 +2455,23 @@ function marketDataPanel(nav: Nav, s: J, markets: J): HTMLElement {
         ].filter(Boolean).join(" · "),
       ),
       p.not_ready && p.enabled ? h("p", { class: "meta warn" }, `Not used yet: ${p.not_ready}.`) : null,
+      p.exhausted_today
+        ? h(
+          "div",
+          { class: "stopped" },
+          h(
+            "p",
+            { class: "meta warn" },
+            `Stopped for today (until midnight UTC) after ${p.calls_today} call${
+              p.calls_today === 1 ? "" : "s"
+            }${p.exhausted_note ? `. ${p.name} said: “${p.exhausted_note}”` : "."}`,
+          ),
+          h("button", {
+            type: "button",
+            onclick: act(() => post(`/providers/${p.id}/resume`)),
+          }, "Resume today"),
+        )
+        : null,
       h("p", { class: "consent" }, p.consent_text),
       h(
         "label",

@@ -1020,3 +1020,14 @@ fieldset,
 .provider + details {
   margin-top: 1rem;
 }
+.stopped {
+  display: flex;
+  gap: .75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.stopped p {
+  flex: 1;
+  margin: 0;
+  min-width: 14rem;
+}

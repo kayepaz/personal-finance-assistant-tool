@@ -54,6 +54,12 @@ version is tagged in git (`v0.1.0` …) with a matching GitHub release.
 
 ### Fixed
 
+- **Alpha Vantage was stopped for the day after a "slow down" message.** Every Alpha Vantage notice mentions
+  premium plans, so the per-second burst notice (and premium-endpoint notices) were mistaken for the daily
+  limit. Now only the daily-limit notice stops a provider for the day; a burst notice is retried once after a
+  short wait, and a premium-endpoint notice fails just that request. Finnhub's and custom APIs' HTTP 429
+  (calls per minute) no longer stop them for the day either. When a provider is stopped, Settings shows its
+  own message and a **Resume today** button.
 - **Sales could be recorded for less than was sold.** The sale form had no quantity box; the quantity was
   taken from the per-purchase amounts, so a typo there silently changed the sale. The form now asks for
   **Quantity sold** and checks as you type that the purchase amounts add up to it (with one open purchase the

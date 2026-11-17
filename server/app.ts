@@ -147,6 +147,12 @@ function buildRouter(opts: AppOptions): Router<State> {
     return providers.listProviders(data(c), cache(c), new Date().toISOString().slice(0, 10));
   });
   r.delete("/api/providers/:id", (c) => providers.deleteProvider(data(c), c.params.id));
+  r.post("/api/providers/:id/resume", (c) => {
+    providers.requireProvider(data(c), c.params.id);
+    const day = new Date().toISOString().slice(0, 10);
+    providers.resumeToday(cache(c), c.params.id, day);
+    return providerView(c, c.params.id);
+  });
 
   r.post("/api/jobs/run", async (c) => (lastJobs = await runJobs(c.state.dbs, c.state.fetchFn)));
 

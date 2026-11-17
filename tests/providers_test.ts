@@ -4,6 +4,16 @@ import { migrate, openDatabase, openInMemory } from "../server/db/db.ts";
 import { createApp } from "../server/app.ts";
 import { resetLoginBrake } from "../server/services/auth.ts";
 import { createPacer } from "../server/services/pacing.ts";
+import { alphaVantageNotice, setBurstRetryMs } from "../server/services/providers.ts";
+
+setBurstRetryMs(0);
+
+const BURST =
+  "Thank you for using Alpha Vantage! Please consider spreading out your free API requests more sparingly (1 request per second). You may subscribe to any of the premium plans at https://www.alphavantage.co/premium/ to lift the free key rate limit (25 requests per day), raise the per-second burst limit, and unlock all premium endpoints";
+const DAILY =
+  "We have detected your API key as DEMO and our standard API rate limit is 25 requests per day. Please subscribe to any of the premium plans at https://www.alphavantage.co/premium/ to instantly remove all daily rate limits.";
+const PREMIUM =
+  "Thank you for using Alpha Vantage! This is a premium endpoint. You may subscribe to any of the premium plans at https://www.alphavantage.co/premium/ to instantly unlock all premium endpoints";
 
 // deno-lint-ignore no-explicit-any
 type J = Record<string, any>;
@@ -193,4 +203,55 @@ Deno.test("migration 0011 turns existing keys and consents into providers", () =
     ["bankofcanada", "bankofcanada", "free", null, 200, 3],
   ]);
   assert.equal(db.prepare("SELECT count(*) AS n FROM settings WHERE key LIKE 'api_key:%'").get()!.n, 0);
+});
+
+Deno.test("Alpha Vantage notices: only the daily-limit one stops the provider for the day", async () => {
+  assert.equal(alphaVantageNotice(DAILY), "daily");
+  assert.equal(alphaVantageNotice(PREMIUM), "other");
+  // The burst notice also mentions "25 requests per day" in its sales pitch; it is still a burst notice.
+  assert.equal(alphaVantageNotice(BURST), "burst");
+
+  let replies: string[] = [];
+  const fakeFetch = (() => {
+    const next = replies.shift() ?? "ok";
+    if (next === "ok") {
+      return Promise.resolve(
+        Response.json({ "Time Series (Daily)": { "2026-11-16": { "4. close": "10.5" } } }),
+      );
+    }
+    return Promise.resolve(Response.json({ Information: next }));
+  }) as typeof fetch;
+  const { ok } = await setup(fakeFetch);
+  const av = await ok("POST", "/api/providers", { type: "alphavantage", api_key: "AVKEY", consent: true });
+  const status = async () =>
+    ((await ok("GET", "/api/settings")).providers as J[]).find((p) => p.id === av.id)!;
+
+  // A burst notice is retried once; the retry succeeds and nothing is stopped.
+  replies = [BURST, "ok"];
+  const first = await ok("POST", "/api/instruments/check", { market: "US", symbol: "AAA" });
+  assert.equal(first.ok, true);
+  assert.equal((await status()).exhausted_today, false);
+
+  // Two burst notices in a row: this check fails, but the provider isn't stopped for the day.
+  replies = [BURST, BURST];
+  const busy = await ok("POST", "/api/instruments/check", { market: "US", symbol: "BBB" });
+  assert.equal(busy.ok, false);
+  assert.equal((await status()).exhausted_today, false);
+
+  // A premium-endpoint notice fails that request only.
+  replies = [PREMIUM];
+  await ok("POST", "/api/instruments/check", { market: "US", symbol: "CCC" });
+  assert.equal((await status()).exhausted_today, false);
+
+  // The daily notice stops it, and Settings shows Alpha Vantage's own words.
+  replies = [DAILY];
+  await ok("POST", "/api/instruments/check", { market: "US", symbol: "DDD" });
+  const stopped = await status();
+  assert.deepEqual([stopped.exhausted_today, stopped.exhausted_note], [true, DAILY]);
+  const skipped = await ok("POST", "/api/instruments/check", { market: "US", symbol: "EEE" });
+  assert.deepEqual(skipped.tried, [{ provider: "Alpha Vantage", result: "daily limit reached" }]);
+
+  // Resume today lifts the stop.
+  const resumed = await ok("POST", `/api/providers/${av.id}/resume`);
+  assert.deepEqual([resumed.exhausted_today, resumed.exhausted_note], [false, null]);
 });

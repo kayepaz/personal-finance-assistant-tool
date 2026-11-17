@@ -8,6 +8,7 @@ import * as d from "../lib/decimal.ts";
 import { isIsoDate } from "../lib/dates.ts";
 import {
   allProviders,
+  alphaVantageNotice,
   budgetProblem,
   countCall,
   markExhausted,
@@ -179,7 +180,11 @@ export async function refreshFx(
       }).toString();
       const res = await providerFetch(av, fetchFn, `Exchange rate · ${c}/${base}`)(url);
       const body = await res.json();
-      if (body.Note || body.Information) throw new QuotaExceeded(String(body.Note ?? body.Information));
+      const notice = body.Note ?? body.Information;
+      if (notice) {
+        if (alphaVantageNotice(String(notice)) === "daily") throw new QuotaExceeded(String(notice));
+        throw new Error(String(notice));
+      }
       const info = body["Realtime Currency Exchange Rate"];
       const rate = String(info?.["5. Exchange Rate"] ?? "").trim();
       const date = String(info?.["6. Last Refreshed"] ?? "").slice(0, 10);
@@ -188,7 +193,7 @@ export async function refreshFx(
       result.updated.push(`${c}/${base}`);
       result.missing = result.missing.filter((m) => m.currency !== c);
     } catch (err) {
-      if (err instanceof QuotaExceeded) markExhausted(cache, av.id, utcDay);
+      if (err instanceof QuotaExceeded) markExhausted(cache, av.id, utcDay, err.message);
       result.missing = result.missing.filter((m) => m.currency !== c);
       result.missing.push({ currency: c, error: `${av.name}: ${(err as Error).message}` });
     }
