@@ -1483,21 +1483,27 @@ export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
   const [deps, markets] = await Promise.all([get(`/assets/${id}/dependents`), get("/markets")]);
   const price = a.latest_price;
 
+  const sellQty = input("quantity", { required: true, pattern: "\\d+(\\.\\d+)?", inputmode: "decimal" });
+  const totalOpen = openBuys.reduce((t, b) => t + Number(b.open_quantity), 0);
+  const split = allocationEditor(
+    openBuys.map((b) => ({ id: b.id, date: b.trade_date, price: b.price, open: b.open_quantity })),
+    sellQty,
+  );
+
   const sellForm = h(
     "form",
     {
       onsubmit: onSubmit(nav, async (d) => {
-        const allocations = openBuys
-          .map((b) => ({ buy_trade_id: b.id, quantity: d[`alloc_${b.id}`] }))
-          .filter((x) => x.quantity && Number(x.quantity) > 0);
-        const total = allocations.reduce((s, x) => s + Number(x.quantity), 0);
+        const problem = split.check();
+        if (problem) throw new Error(problem);
+        const allocations = split.values();
         const r = await post(`/assets/${id}/sells`, {
           trade_date: d.trade_date,
+          quantity: d.quantity,
           price: d.price,
           fees: d.fees,
           notes: d.notes,
           allocations,
-          quantity: allocations.length === 1 ? allocations[0].quantity : String(total),
         });
         if (r.fully_sold_theses.length) {
           nav.toast(
@@ -1511,23 +1517,12 @@ export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
       }),
     },
     field("Date", input("trade_date", { type: "date", required: true, value: todayStr() })),
+    field("Quantity sold", sellQty, `You hold ${fmtNum(String(totalOpen))}.`),
     field(
       "Price per unit",
       input("price", { required: true, pattern: "\\d+(\\.\\d+)?", inputmode: "decimal" }),
     ),
-    h(
-      "fieldset",
-      null,
-      h("legend", null, "Which purchases does this sale close?"),
-      openBuys.length
-        ? openBuys.map((b) =>
-          field(
-            `${b.trade_date} @ ${fmtNum(b.price)} (${fmtNum(b.open_quantity)} open)`,
-            input(`alloc_${b.id}`, { placeholder: "0", pattern: "\\d+(\\.\\d+)?", inputmode: "decimal" }),
-          )
-        )
-        : empty("No open purchases."),
-    ),
+    split.el,
     field("Fees (noted only)", input("fees", { pattern: "\\d+(\\.\\d+)?", inputmode: "decimal" })),
     field("Notes", input("notes")),
     h("button", { type: "submit", class: "primary" }, "Record sale"),
@@ -1674,7 +1669,7 @@ export async function assetView(nav: Nav, id: string): Promise<HTMLElement> {
                     }, "Delete"),
                   ),
                 )
-              ).flatMap((row: HTMLElement, i: number) => [row, tradeEditRow(nav, a.trades[i])]),
+              ).flatMap((row: HTMLElement, i: number) => [row, tradeEditRow(nav, a.trades[i], a.trades)]),
             ),
           )
           : empty("No trades yet."),
@@ -1752,8 +1747,27 @@ function assetValuePanel(nav: Nav, a: J): HTMLElement {
   );
 }
 
-function tradeEditRow(nav: Nav, t: J): HTMLElement {
+function tradeEditRow(nav: Nav, t: J, trades: J[]): HTMLElement {
   const dec = { pattern: "\\d+(\\.\\d+)?", inputmode: "decimal" };
+  const sale = t.side === "sell";
+  const qty = input("quantity", { ...dec, required: true, value: t.quantity });
+  // A sale can be re-split across any purchase with something open, counting what this sale already closes.
+  const mine = new Map<string, string>((t.allocations ?? []).map((x: J) => [x.buy_trade_id, x.quantity]));
+  const split = sale
+    ? allocationEditor(
+      trades
+        .filter((b) => b.side === "buy" && (Number(b.open_quantity) > 0 || mine.has(b.id)))
+        .sort((x, y) => (x.trade_date < y.trade_date ? -1 : 1))
+        .map((b) => ({
+          id: b.id,
+          date: b.trade_date,
+          price: b.price,
+          open: String(Number(b.open_quantity) + Number(mine.get(b.id) ?? 0)),
+        })),
+      qty,
+      mine,
+    )
+    : null;
   return h(
     "tr",
     { id: `edit-${t.id}`, hidden: true, class: "edit-row" },
@@ -1763,36 +1777,101 @@ function tradeEditRow(nav: Nav, t: J): HTMLElement {
       h(
         "form",
         {
-          class: "row-form",
+          class: sale ? "sale-edit" : "trade-edit",
           onsubmit: onSubmit(nav, (d) => {
             const body: J = {
               trade_date: d.trade_date,
+              quantity: d.quantity,
               price: d.price,
               fees: d.fees ?? "0",
               notes: d.notes ?? "",
             };
-            if (t.side === "buy") body.quantity = d.quantity;
+            if (split) {
+              const problem = split.check();
+              if (problem) throw new Error(problem);
+              body.allocations = split.values();
+            }
             return patch(`/trades/${t.id}`, body).then(() => nav.refresh());
           }),
         },
-        input("trade_date", { type: "date", required: true, value: t.trade_date, "aria-label": "Date" }),
-        t.side === "buy"
-          ? input("quantity", { ...dec, required: true, value: t.quantity, "aria-label": "Quantity" })
-          : h("span", { class: "meta" }, `${fmtNum(t.quantity)} sold`),
-        input("price", { ...dec, required: true, value: t.price, "aria-label": "Price" }),
-        input("fees", { ...dec, value: t.fees, placeholder: "Fees", "aria-label": "Fees" }),
-        input("notes", { value: t.notes, placeholder: "Notes", "aria-label": "Notes" }),
-        h("button", { type: "submit", class: "primary" }, "Save"),
+        h(
+          "div",
+          { class: "trade-edit-fields" },
+          field("Date", input("trade_date", { type: "date", required: true, value: t.trade_date })),
+          field(sale ? "Quantity sold" : "Quantity", qty),
+          field("Price per unit", input("price", { ...dec, required: true, value: t.price })),
+          field("Fees", input("fees", { ...dec, value: t.fees })),
+          field("Notes", input("notes", { value: t.notes })),
+        ),
+        split ? split.el : null,
+        h("button", { type: "submit", class: "primary" }, sale ? "Save sale" : "Save"),
       ),
-      t.side === "sell"
-        ? h(
-          "p",
-          { class: "hint" },
-          "To change the quantity or which purchases a sale closed, delete it and record it again.",
-        )
-        : null,
     ),
   );
+}
+
+/**
+ * "Which purchases does this sale close?" — one amount per purchase, which must add up to the quantity sold.
+ * With a single purchase the amount follows the quantity. `check()` returns the problem to show, if any.
+ */
+function allocationEditor(
+  buys: { id: string; date: string; price: string; open: string }[],
+  qtyInput: HTMLInputElement,
+  initial: Map<string, string> = new Map(),
+): { el: HTMLElement; check: () => string | null; values: () => J[] } {
+  const inputs = buys.map((b) =>
+    input(`alloc_${b.id}`, {
+      placeholder: "0",
+      pattern: "\\d+(\\.\\d+)?",
+      inputmode: "decimal",
+      value: initial.get(b.id) ?? "",
+      "aria-label": `Sold from the ${b.date} purchase`,
+    })
+  );
+  const status = h("p", { class: "alloc-status" });
+  // Compare in billionths so decimal quantities add up without float noise.
+  const units = (x: string) => Math.round(Number(x || 0) * 1e9);
+  const totalOpen = buys.reduce((t, b) => t + units(b.open), 0);
+  const check = (): string | null => {
+    const qty = qtyInput.value.trim();
+    const allocated = inputs.reduce((t, el) => t + units(el.value), 0);
+    let problem: string | null = null;
+    if (qty && units(qty) > totalOpen) {
+      problem = `Only ${fmtNum(String(totalOpen / 1e9))} is available to sell.`;
+    } else if (qty && units(qty) > 0 && allocated !== units(qty)) {
+      problem = `The purchases add up to ${fmtNum(String(allocated / 1e9))}, not ${fmtNum(qty)}.`;
+    }
+    buys.forEach((b, i) => {
+      if (units(inputs[i].value) > units(b.open)) {
+        problem = `The ${b.date} purchase only has ${fmtNum(b.open)} to sell.`;
+      }
+    });
+    status.textContent = problem ?? (qty ? `✓ ${fmtNum(qty)} allocated.` : "");
+    status.className = `alloc-status ${problem ? "bad" : "ok"}`;
+    return problem;
+  };
+  qtyInput.addEventListener("input", () => {
+    if (inputs.length === 1) inputs[0].value = qtyInput.value.trim();
+    check();
+  });
+  inputs.forEach((el) => el.addEventListener("input", check));
+  const el = h(
+    "fieldset",
+    null,
+    h("legend", null, "Which purchases does this sale close?"),
+    buys.length
+      ? buys.map((b, i) => field(`${b.date} @ ${fmtNum(b.price)} (${fmtNum(b.open)} available)`, inputs[i]))
+      : empty("No open purchases."),
+    status,
+  );
+  return {
+    el,
+    check,
+    values: () =>
+      buys
+        .map((b, i) => ({ buy_trade_id: b.id, quantity: inputs[i].value.trim() }))
+        .filter((x) => x.quantity && Number(x.quantity) > 0),
+  };
 }
 
 function pricesPanel(nav: Nav, inst: J): HTMLElement {

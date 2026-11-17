@@ -208,7 +208,10 @@ Deno.test("triggers fire once, notifications need action, adjusting re-arms", as
 
   // Snooze hides it until the date; a sale resolves it.
   const [n2] = (await ok("GET", "/api/notifications")) as unknown as J[];
-  await ok("POST", `/api/notifications/${n2.id}/actions`, { action: "snooze", until: "2026-11-10" });
+  await ok("POST", `/api/notifications/${n2.id}/actions`, {
+    action: "snooze",
+    until: new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10), // snoozing needs a real future date
+  });
   assert.equal(((await ok("GET", "/api/notifications")) as unknown as J[]).length, 0);
 
   // Date trigger fires on its date.

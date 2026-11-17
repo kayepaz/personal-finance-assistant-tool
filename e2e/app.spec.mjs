@@ -141,6 +141,38 @@ test("investing: a thesis with a shared trigger fires and can be adjusted", asyn
   await expect(page.getByText("Gold is volatile")).toBeVisible();
 });
 
+test("selling: purchase amounts must add up to the quantity sold", async () => {
+  await nav("Accounts").click();
+  await page.click("text=Manage instruments");
+  await page.locator(".list.instruments > li", { hasText: "MAPLE" }).getByRole("link").first().click();
+  await open("Record a sale");
+  const sale = page.locator("form", { has: page.locator("button:has-text('Record sale')") });
+  await sale.locator("input[name=quantity]").fill("2");
+  const alloc = sale.locator("input[name^=alloc_]");
+  await expect(alloc).toHaveValue("2"); // one open purchase: follows the quantity
+  await alloc.fill("1");
+  await expect(sale.locator(".alloc-status")).toContainText("add up to 1, not 2");
+  await sale.locator("input[name=price]").fill("3500");
+  await sale.locator("button:has-text('Record sale')").click();
+  await expect(page.locator(".toast-error")).toContainText("add up to 1, not 2");
+  await alloc.fill("2");
+  await expect(sale.locator(".alloc-status")).toContainText("✓ 2 allocated");
+  await sale.locator("button:has-text('Record sale')").click();
+  const sellRow = page.locator("tr", { has: page.locator("td", { hasText: "Sell" }) }).first();
+  await expect(sellRow).toBeVisible();
+
+  // Editing the sale: the quantity and the split can change, and must still add up.
+  await sellRow.getByRole("button", { name: "Edit" }).click();
+  const edit = page.locator("form.sale-edit");
+  await edit.locator("input[name=quantity]").fill("1");
+  await expect(edit.locator("input[name^=alloc_]")).toHaveValue("1");
+  await edit.locator("input[name^=alloc_]").fill("2");
+  await expect(edit.locator(".alloc-status")).toContainText("add up to 2, not 1");
+  await edit.locator("input[name^=alloc_]").fill("1");
+  await edit.locator("button:has-text('Save sale')").click();
+  await expect(sellRow.locator("td.num").first()).toHaveText("1");
+});
+
 test("instruments: list usage and delete an unused one", async () => {
   await nav("Accounts").click();
   await page.click("text=Manage instruments");

@@ -311,12 +311,13 @@ export interface SellResult {
   fully_sold_theses: Row[];
 }
 
-export function recordSell(db: DB, assetId: string, body: Obj): SellResult {
-  const asset = getAsset(db, assetId);
-  if (asset.tracking !== "trades") throw badRequest("This asset is value-tracked");
-  const tradeDate = v.date(body, "trade_date")!;
-  const quantity = v.dec(body, "quantity", { positive: true })!;
-  const price = v.dec(body, "price", { nonNegative: true })!;
+interface Allocation {
+  buyId: string;
+  quantity: string;
+}
+
+/** Read `allocations` from a request: each purchase once, positive amounts that add up to the sale quantity. */
+function parseAllocations(body: Obj, quantity: string): Allocation[] {
   const allocations = body.allocations;
   if (!Array.isArray(allocations) || allocations.length === 0) {
     throw badRequest("'allocations' must list which purchases this sale closes");
@@ -329,23 +330,38 @@ export function recordSell(db: DB, assetId: string, body: Obj): SellResult {
   if (new Set(parsed.map((p) => p.buyId)).size !== parsed.length) {
     throw badRequest("Each purchase may appear once");
   }
-  if (d.cmp(d.sum(parsed.map((p) => p.quantity)), quantity) !== 0) {
-    throw badRequest("Allocated quantities must add up to the sale quantity");
+  const total = d.sum(parsed.map((p) => p.quantity));
+  if (d.cmp(total, quantity) !== 0) {
+    throw badRequest(`The purchases add up to ${total}, but the sale is for ${quantity}; they must match`);
   }
+  return parsed;
+}
 
-  return transaction(db, () => {
-    for (const p of parsed) {
-      const buy = getTrade(db, p.buyId);
-      if (buy.asset_id !== assetId || buy.side !== "buy") {
-        throw badRequest(`Trade ${p.buyId} is not a purchase of this asset`);
-      }
-      if ((buy.trade_date as string) > tradeDate) {
-        throw badRequest(`Purchase on ${buy.trade_date} is after the sale date`);
-      }
-      if (d.cmp(p.quantity, openQty(db, buy)) > 0) {
-        throw badRequest(`Purchase on ${buy.trade_date} only has ${openQty(db, buy)} left to sell`);
-      }
+/** Each allocation must be an earlier purchase of this asset with enough left open (call inside a transaction). */
+function checkAllocations(db: DB, assetId: string, saleDate: string, parsed: Allocation[]): void {
+  for (const p of parsed) {
+    const buy = getTrade(db, p.buyId);
+    if (buy.asset_id !== assetId || buy.side !== "buy") {
+      throw badRequest(`Trade ${p.buyId} is not a purchase of this asset`);
     }
+    if ((buy.trade_date as string) > saleDate) {
+      throw badRequest(`Purchase on ${buy.trade_date} is after the sale date`);
+    }
+    if (d.cmp(p.quantity, openQty(db, buy)) > 0) {
+      throw badRequest(`Purchase on ${buy.trade_date} only has ${openQty(db, buy)} left to sell`);
+    }
+  }
+}
+
+export function recordSell(db: DB, assetId: string, body: Obj): SellResult {
+  const asset = getAsset(db, assetId);
+  if (asset.tracking !== "trades") throw badRequest("This asset is value-tracked");
+  const tradeDate = v.date(body, "trade_date")!;
+  const quantity = v.dec(body, "quantity", { positive: true })!;
+  const price = v.dec(body, "price", { nonNegative: true })!;
+  const parsed = parseAllocations(body, quantity);
+  return transaction(db, () => {
+    checkAllocations(db, assetId, tradeDate, parsed);
     const id = uuidv7();
     db.prepare(
       `INSERT INTO trades(id, asset_id, side, trade_date, quantity, price, fees, notes, created_at)
@@ -388,8 +404,8 @@ function fullySoldTheses(db: DB, buyIds: string[]): Row[] {
 
 /**
  * Correct a trade. Buys: date, quantity, price, fees, notes — quantity can't drop below what sales have already
- * closed, and the date can't move after those sales. Sells: date, price, fees, notes — to change a sale's
- * quantity or which purchases it closed, delete it and record it again.
+ * closed, and the date can't move after those sales. Sells: date, price, fees, notes, and quantity with
+ * `allocations` (which purchases it closes; they must add up to the quantity).
  */
 export function updateTrade(db: DB, id: string, body: Obj): Row {
   const t = getTrade(db, id);
@@ -409,7 +425,7 @@ export function updateTrade(db: DB, id: string, body: Obj): Row {
             `This purchase was partly sold on ${firstSale.d}; its date can't be later than that`,
           );
         }
-      } else {
+      } else if (!v.has(body, "allocations")) {
         const lastBuy = db.prepare(
           `SELECT max(b.trade_date) AS d FROM sale_allocations a JOIN trades b ON b.id = a.buy_trade_id
            WHERE a.sell_trade_id = ?`,
@@ -422,10 +438,21 @@ export function updateTrade(db: DB, id: string, body: Obj): Row {
       }
       set("trade_date", date);
     }
-    if (v.has(body, "quantity")) {
-      if (t.side === "sell") {
-        throw badRequest("To change how much was sold, delete the sale and record it again");
-      }
+    if (t.side === "sell" && (v.has(body, "quantity") || v.has(body, "allocations"))) {
+      // Re-allocate: release this sale's purchases, then check the new split against what's open.
+      const qty = v.has(body, "quantity")
+        ? v.dec(body, "quantity", { positive: true })!
+        : t.quantity as string;
+      const parsed = parseAllocations(body, qty);
+      const saleDate = v.has(body, "trade_date") ? v.date(body, "trade_date")! : t.trade_date as string;
+      db.prepare("DELETE FROM sale_allocations WHERE sell_trade_id = ?").run(id);
+      checkAllocations(db, t.asset_id as string, saleDate, parsed);
+      const ins = db.prepare(
+        "INSERT INTO sale_allocations(sell_trade_id, buy_trade_id, quantity) VALUES (?, ?, ?)",
+      );
+      for (const p of parsed) ins.run(id, p.buyId, p.quantity);
+      set("quantity", qty);
+    } else if (v.has(body, "quantity")) {
       const qty = v.dec(body, "quantity", { positive: true })!;
       const sold = allocatedQty(db, id);
       if (d.cmp(qty, sold) < 0) throw badRequest(`${sold} of this purchase has already been sold`);

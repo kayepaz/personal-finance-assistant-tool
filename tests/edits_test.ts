@@ -263,3 +263,62 @@ Deno.test("history lists the fields each change touched", async () => {
   assert.ok(created.changes.every((c: J) => c.before === undefined || !("before" in c)));
   assert.ok(created.changes.some((c: J) => c.field === "title" && c.after === "Draft idea"));
 });
+
+Deno.test("a sale's quantity and purchase split can be edited, and must add up", async () => {
+  const { ok, call } = await setup();
+  const h = await holding(ok, "AMD");
+  const second = await ok("POST", `/api/assets/${h.asset.id}/buys`, {
+    trade_date: "2026-02-01",
+    quantity: "5",
+    price: "5",
+  });
+  // Recording: 5 sold but only 4 allocated is refused.
+  const short = await call("POST", `/api/assets/${h.asset.id}/sells`, {
+    trade_date: "2026-03-01",
+    quantity: "5",
+    price: "6",
+    allocations: [{ buy_trade_id: h.buy.id, quantity: "4" }],
+  });
+  assert.equal(short.status, 400);
+  assert.match(short.body.error, /add up to 4, but the sale is for 5/);
+
+  const sale = await ok("POST", `/api/assets/${h.asset.id}/sells`, {
+    trade_date: "2026-03-01",
+    quantity: "4",
+    price: "6",
+    allocations: [{ buy_trade_id: h.buy.id, quantity: "4" }],
+  });
+  const patch = (body: J) => call("PATCH", `/api/trades/${sale.trade.id}`, body);
+  assert.equal(
+    (await patch({ quantity: "6", allocations: [{ buy_trade_id: h.buy.id, quantity: "4" }] })).status,
+    400,
+  );
+  assert.equal(
+    (await patch({ quantity: "6", allocations: [{ buy_trade_id: second.id, quantity: "6" }] })).status,
+    400,
+    "more than that purchase holds",
+  );
+  // Move part of the sale to the second purchase and grow it; the sale's own 4 are released first.
+  await ok("PATCH", `/api/trades/${sale.trade.id}`, {
+    quantity: "7",
+    allocations: [{ buy_trade_id: h.buy.id, quantity: "3" }, { buy_trade_id: second.id, quantity: "4" }],
+  });
+  const a = await ok("GET", `/api/assets/${h.asset.id}`);
+  const sell = a.trades.find((t: J) => t.side === "sell");
+  assert.equal(sell.quantity, "7");
+  assert.deepEqual(
+    Object.fromEntries(
+      a.trades.filter((t: J) => t.side === "buy").map((t: J) => [t.trade_date, t.open_quantity]),
+    ),
+    { "2026-02-01": "1", [h.buy.trade_date]: String(Number(h.buy.quantity) - 3) },
+  );
+  // A failed edit leaves the original split in place.
+  assert.equal(
+    (await patch({ quantity: "1", allocations: [{ buy_trade_id: h.buy.id, quantity: "2" }] })).status,
+    400,
+  );
+  assert.equal(
+    (await ok("GET", `/api/assets/${h.asset.id}`)).quantity,
+    String(Number(h.buy.quantity) + 5 - 7),
+  );
+});

@@ -41,6 +41,12 @@ version is tagged in git (`v0.1.0` …) with a matching GitHub release.
 
 ### Fixed
 
+- **Sales could be recorded for less than was sold.** The sale form had no quantity box; the quantity was
+  taken from the per-purchase amounts, so a typo there silently changed the sale. The form now asks for
+  **Quantity sold** and checks as you type that the purchase amounts add up to it (with one open purchase the
+  amount follows the quantity). The server's error now says what the amounts add up to.
+- **Sales can be fully edited.** Editing a sale now lets you change its quantity and which purchases it
+  closes, with the same add-up check; a failed edit leaves the sale as it was. Trade edit fields are labelled.
 - Canadian symbols: the old hint suggested `SHOP.TO`, which Alpha Vantage doesn't recognise. Migration `0010`
   adds `instruments.market`, works it out from the old exchange text and symbol suffixes, and rewrites TSX /
   TSX Venture provider symbols to `.TRT` / `.TRV`.

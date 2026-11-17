@@ -978,3 +978,27 @@ fieldset,
 .assets-total + details {
   margin-top: 1rem;
 }
+.alloc-status {
+  margin: .25rem 0 0;
+  font-size: .88rem;
+}
+.alloc-status.ok {
+  color: var(--ok);
+}
+.alloc-status.bad {
+  color: var(--danger);
+}
+.sale-edit,
+.trade-edit {
+  display: grid;
+  gap: .6rem;
+}
+.trade-edit-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: .5rem .75rem;
+}
+.sale-edit > button,
+.trade-edit > button {
+  justify-self: start;
+}

@@ -1,5 +1,5 @@
 // Service worker: cache the app shell so PFAT opens instantly. API calls always go to the network.
-const CACHE = "pfat-shell-v14";
+const CACHE = "pfat-shell-v16";
 const SHELL = [
   "/",
   "/styles.css",
