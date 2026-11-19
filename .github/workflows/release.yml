@@ -101,7 +101,7 @@ jobs:
           } | Set-Content -Encoding ascii dist\SHA256SUMS.txt
           Get-Content dist\SHA256SUMS.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: pfat-windows-${{ steps.version.outputs.version }}
           path: |
