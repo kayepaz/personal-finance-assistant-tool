@@ -17,6 +17,26 @@ Pre-alpha, v0.4.0. What changed is in the [CHANGELOG](CHANGELOG.md); how it work
 
 ## Run it
 
+### On Windows (installer)
+
+Download `PFAT-Setup-<version>.exe` from the
+[releases page](https://github.com/kayepaz/personal-finance-assistant-tool/releases) and run it. It installs
+for your Windows account only (no admin rights) and adds **PFAT** and **Stop PFAT** to the Start menu.
+**PFAT** opens http://localhost:8787 in your browser, starting the server in the background if it isn't
+running. The installer offers to:
+
+- **start PFAT when you sign in**, so prices, triggers and reminders keep being checked (on by default);
+- **allow phones and other computers on your home network to connect**. This listens on all network interfaces
+  and adds a Windows Firewall rule for private networks; it's the only step that asks for admin rights.
+
+Data lives in `%LOCALAPPDATA%\PFAT` (with `pfat.log`, the server log) and is kept when you upgrade; the
+uninstaller asks before deleting it. To change settings later, run `pfat.exe config lan on|off` or
+`pfat.exe config port <number>` from `%LOCALAPPDATA%\Programs\PFAT`, then Stop PFAT and open it again. The
+installer isn't code-signed yet, so SmartScreen may say "Windows protected your PC": choose **More info → Run
+anyway** after checking the file against `SHA256SUMS.txt` on the release.
+
+### From source (any system)
+
 Requires [Deno](https://deno.com) 2.2 or newer. There are no other dependencies and no build step.
 
 ```sh
@@ -32,6 +52,11 @@ your data, `cache.db` = market data that can be rebuilt).
 | `PFAT_HOST`              | `127.0.0.1` | Bind address (use `0.0.0.0` to reach it from other devices on your network) |
 | `PFAT_DATA_DIR`          | `./data`    | Where the two SQLite files live                                             |
 | `PFAT_SCHEDULER_MINUTES` | `60`        | How often background jobs run                                               |
+
+The same settings can live in `pfat.config.json` in the data folder (`{"lan": true, "port": 8800}`; edit it
+with `deno task start config lan on`). Environment variables win over the file, and `--lan`, `--no-lan`,
+`--port <n>` and `--open` (open a browser) win over both. Starting PFAT when it's already running just opens
+the browser (with `--open`) and exits.
 
 Market-data keys (Alpha Vantage, Finnhub) are entered in Settings, and each provider is only contacted after
 you consent to it.
@@ -97,6 +122,14 @@ Only devices signed in to your tailnet can reach it. Stop with `tailscale serve 
    trusted certificate. Then open `https://192.168.1.50`.
 
 ## Develop
+
+To build the Windows installer, push a version tag (it must match `deno.json`): the
+[Windows installer workflow](.github/workflows/release.yml) builds `pfat.exe` with `deno compile`, smoke-tests
+it, builds `PFAT-Setup-<version>.exe` with [Inno Setup](https://jrsoftware.org/isinfo.php)
+(`installer/windows/pfat.iss`), test-installs and uninstalls it, and attaches it with checksums to the
+release. Run the workflow by hand from the Actions tab to get a test build without a release. Locally,
+`deno task
+compile:windows` builds just `dist/pfat.exe`.
 
 ```sh
 deno task dev     # restart on change

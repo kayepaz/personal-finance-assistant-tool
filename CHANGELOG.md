@@ -5,6 +5,18 @@ version is tagged in git (`v0.1.0` …) with a matching GitHub release.
 
 ## Unreleased
 
+### Added
+
+- **Windows installer** (`PFAT-Setup-<version>.exe`, built by a new release workflow on a Windows runner): a
+  single `pfat.exe` made with `deno compile`, Start menu **PFAT** (opens the browser, starting the server if
+  needed) and **Stop PFAT** shortcuts, optional start at sign-in, and an optional "other devices on my
+  network" setting that adds a private-network Windows Firewall rule. Per-user install, no admin rights except
+  for the firewall rule; data in `%LOCALAPPDATA%\PFAT`, kept on upgrade, deleted on uninstall only if you say
+  so.
+- `pfat.config.json` in the data folder (`lan`, `port`), `pfat config lan on|off` / `pfat config port <n>`,
+  and `--open`, `--lan`, `--no-lan`, `--port`, `--version` flags. A second start finds the running server
+  instead of failing. With LAN access on, the log shows this machine's network addresses.
+
 ### Changed
 
 - **Market data providers are a list you manage** (Settings → Market data) instead of three fixed entries. Add

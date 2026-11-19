@@ -1,0 +1,124 @@
+name: Windows installer
+
+# Builds pfat.exe and PFAT-Setup-<version>.exe on a Windows runner.
+# - Pushing a version tag (v0.5.0) attaches the installer and checksums to that GitHub release.
+# - "Run workflow" on the Actions tab builds them as a downloadable artifact only.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Work out the version
+        id: version
+        run: |
+          $declared = (Get-Content deno.json -Raw | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $tag = $env:GITHUB_REF_NAME.TrimStart("v")
+            if ($tag -ne $declared) { throw "Tag v$tag doesn't match deno.json version $declared" }
+            $v = $tag
+          } else {
+            $v = "$declared-dev.$($env:GITHUB_RUN_NUMBER)"
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Building PFAT $v"
+
+      - name: Build pfat.exe
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          deno task compile:windows
+
+      - name: Smoke test pfat.exe
+        run: |
+          # pfat.exe has no console window, so start it and talk to it over HTTP.
+          $data = Join-Path $env:RUNNER_TEMP "pfat-smoke"
+          $env:PFAT_DATA_DIR = $data
+          $env:PFAT_PORT = "8799"
+          $p = Start-Process -FilePath .\dist\pfat.exe -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 30 -and -not $ok; $i++) {
+            Start-Sleep -Seconds 1
+            try { $s = Invoke-RestMethod http://127.0.0.1:8799/api/status; $ok = $true } catch {}
+          }
+          try {
+            if (-not $ok) { throw "pfat.exe did not answer on port 8799" }
+            Write-Host "Status: $($s | ConvertTo-Json -Compress)"
+            # The web app and migrations are embedded in the exe: the page loads and the databases exist.
+            $page = Invoke-WebRequest http://127.0.0.1:8799/ -UseBasicParsing
+            if ($page.Content -notmatch "PFAT") { throw "index.html wasn't served from the exe" }
+            $js = Invoke-WebRequest http://127.0.0.1:8799/app.ts -UseBasicParsing
+            if ($js.StatusCode -ne 200) { throw "client code wasn't served" }
+            if (-not (Test-Path "$data\data.db")) { throw "data.db was not created" }
+          } finally {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            if (Test-Path "$data\pfat.log") { Write-Host "--- pfat.log"; Get-Content "$data\pfat.log" }
+          }
+
+      - name: Install Inno Setup
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build the installer
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.version.outputs.version }}" installer\windows\pfat.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
+      - name: Test install and uninstall
+        run: |
+          $setup = Get-ChildItem dist\PFAT-Setup-*.exe | Select-Object -First 1
+          Start-Process $setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS="!startup"' -Wait
+          $app = Join-Path $env:LOCALAPPDATA "Programs\PFAT"
+          if (-not (Test-Path "$app\pfat.exe")) { throw "pfat.exe not installed in $app" }
+          $cfg = Join-Path $env:LOCALAPPDATA "PFAT\pfat.config.json"
+          if (-not (Test-Path $cfg)) { throw "pfat.config.json not written" }
+          Get-Content $cfg
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\PFAT.lnk")) { throw "Start menu shortcut missing" }
+          Start-Process "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait
+          Start-Sleep -Seconds 2
+          if (Test-Path "$app\pfat.exe") { throw "uninstall left pfat.exe behind" }
+
+      - name: Checksums
+        run: |
+          Get-ChildItem dist\PFAT-Setup-*.exe, dist\pfat.exe | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content -Encoding ascii dist\SHA256SUMS.txt
+          Get-Content dist\SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pfat-windows-${{ steps.version.outputs.version }}
+          path: |
+            dist/PFAT-Setup-*.exe
+            dist/SHA256SUMS.txt
+          retention-days: 30
+
+      - name: Attach to the GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $files = @((Get-ChildItem dist\PFAT-Setup-*.exe).FullName, "dist\SHA256SUMS.txt")
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "PFAT $tag" --generate-notes @files
+          } else {
+            gh release upload $tag @files --clobber
+          }
